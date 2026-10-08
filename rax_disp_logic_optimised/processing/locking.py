@@ -41,39 +41,52 @@ def _has_alnum(val) -> bool:
     return bool(_RE_ALNUM.search(str(val)))
 
 
-def co_track_circuits(toc: pd.DataFrame) -> pd.Series:
+def co_track_circuits(toc: pd.DataFrame, col: str = 'RT-TC', need=None) -> pd.Series:
     """
-    RT-TC with calling-on routes filled in from their main route.
+    Track-circuit column `col` with calling-on routes filled in from their
+    main route.
 
-    A CO<n> route whose RT-TC is blank (or a placeholder such as '_' / '-') runs over the same track as the
-    S<n> route to the same TO signal and line, so it takes that route's
-    track circuits (exact UN match first, else the first S<n> route to the
-    same TO).  Other rows are returned unchanged.
+    A CO<n> route whose `col` is blank (or a placeholder such as '_' / '-')
+    runs over the same track as the S<n> route to the same TO signal and
+    line, so it takes that route's track circuits (exact UN match first,
+    else the first S<n> route to the same TO).  `need`, if given, is a
+    boolean list: only CO rows marked True are filled.  Other rows are
+    returned unchanged.
     """
     frm = toc['FROM'].astype(str).str.strip().str.upper()
     to = toc['TO'].astype(str).str.strip().str.upper()
     unk = [un_key(u) for u in toc['UN'].tolist()]
-    rt_tc = toc['RT-TC'].fillna('').astype(str)
+    tcs = toc[col].fillna('').astype(str)
+    need = [True] * len(toc) if need is None else list(need)
 
     by_route: Dict[tuple, str] = {}
     by_to: Dict[tuple, str] = {}
-    for f, t, u, tc in zip(frm, to, unk, rt_tc):
+    for f, t, u, tc in zip(frm, to, unk, tcs):
         if f.startswith('S') and not f.startswith('SH') and _has_alnum(tc):
             by_route.setdefault((f, t, u), tc)
             by_to.setdefault((f, t), tc)
 
-    out = rt_tc.tolist()
-    for k, (f, t, u, tc) in enumerate(zip(frm, to, unk, rt_tc)):
-        if f.startswith('CO') and not _has_alnum(tc):
+    out = tcs.tolist()
+    for k, (f, t, u, tc) in enumerate(zip(frm, to, unk, tcs)):
+        if f.startswith('CO') and need[k] and not _has_alnum(tc):
             main = 'S' + f[2:]
             out[k] = by_route.get((main, t, u)) or by_to.get((main, t), '')
     return pd.Series(out, index=toc.index, dtype=str)
 
 
 def track_circuits_for_locking(toc: pd.DataFrame) -> pd.Series:
-    """TCK column: route + overlap + isolation track circuits (CO routes inherit)."""
+    """
+    TCK column: route + overlap + isolation track circuits.
+
+    CO routes inherit RT-TC from their S route; they inherit OV-TC only
+    when the CO row itself lists overlap points (a calling-on route
+    normally has no overlap).
+    """
     tmp = toc[['RT-TC', 'OV-TC', 'ISO-TC']].copy()
     tmp['RT-TC'] = co_track_circuits(toc)
+    has_ov = [_has_alnum(n) or _has_alnum(r)
+              for n, r in zip(toc['OV-PT-N'].fillna(''), toc['OV-PT-R'].fillna(''))]
+    tmp['OV-TC'] = co_track_circuits(toc, 'OV-TC', need=has_ov)
     return tc_format_fn(tmp)
 
 

@@ -20,20 +20,13 @@ from PySide6.QtWidgets import (
 )
 
 from ..utils.logging_util import debug_print
-from ..io.readers import read_table_file, get_default_output_ext
+from ..io.readers import read_table_file
 from ..io.writers import write_table_file
-from ..io.preprocessor import read_toc_file, detect_toc_format, remap_extra_cols, read_formatted_toc
-from ..io.exporters import write_disp347_xlsx, write_disp516_xlsx
+from ..io.preprocessor import read_toc_file, detect_toc_format, read_formatted_toc
 from ..core.constants import TOC_INPUT_COLS, TOC_BLANK_COLS
 from ..processing.auto_detect import auto_detect_home_signals
-from ..processing.locking import ixl_fn
-from ..processing.square_sheet import (
-    sqsh_fn, vice_versa, new_lck_gen_frm_sqsh,
-    new_disp_gen_frm_sqsh, re_vice_versa,
-)
-from ..processing.criss_cross import criss_cross_mvt
-from ..processing.dispensation import disp_lit_fn
 from ..processing.toc_format import toc_format
+from ..processing.pipeline import parse_bands, parse_home_signals, run_dispensation
 
 # ── Colour palette ─────────────────────────────────────────────────────────
 _BG        = '#f1f5f9'
@@ -362,6 +355,17 @@ class RaxLogicApp(QMainWindow):
         self.e_cc_max = QLineEdit('0')
         g.addWidget(self.e_cc_max, 1, 2)
 
+        g.addWidget(self._num_lbl('12'), 2, 0)
+        g.addWidget(self._desc_lbl('Distance bands (m)'), 2, 1)
+        self.e_cc_bands = QLineEdit()
+        self.e_cc_bands.setPlaceholderText(
+            'e.g. 0-120, 120-300, 300+   (blank = use min/max above)')
+        self.e_cc_bands.setToolTip(
+            'One set of 3.47 / 5.16 documents is generated per band.\n'
+            'A band "a-b" dispenses pairs whose criss-cross distance is > a and <= b;\n'
+            '"300+" has no upper limit.')
+        g.addWidget(self.e_cc_bands, 2, 2)
+
     def _populate_run_card(self, g: QGridLayout):
         g.setColumnStretch(0, 1)
 
@@ -461,6 +465,7 @@ class RaxLogicApp(QMainWindow):
         self.cb_cc.setCurrentText('NO')
         self.e_cc_min.setText('0')
         self.e_cc_max.setText('0')
+        self.e_cc_bands.clear()
         self.pb.setValue(0)
 
     def save_settings(self):
@@ -487,6 +492,7 @@ class RaxLogicApp(QMainWindow):
             f'CRISS_CROSS={self.cb_cc.currentText()}',
             f'CC_MIN={self.e_cc_min.text()}',
             f'CC_MAX={self.e_cc_max.text()}',
+            f'CC_BANDS={self.e_cc_bands.text()}',
         ]
         try:
             with open(filepath, 'w', encoding='utf-8') as f:
@@ -533,6 +539,7 @@ class RaxLogicApp(QMainWindow):
             self.cb_cc.setCurrentText(cfg.get('CRISS_CROSS', 'NO'))
             self.e_cc_min.setText(cfg.get('CC_MIN', '0'))
             self.e_cc_max.setText(cfg.get('CC_MAX', '0'))
+            self.e_cc_bands.setText(cfg.get('CC_BANDS', ''))
 
             QMessageBox.information(self, 'Settings Loaded',
                                     f'Settings loaded from:\n{os.path.basename(filepath)}')
@@ -691,87 +698,47 @@ class RaxLogicApp(QMainWindow):
                 + '\n\nFill in the direction names and run again to include them.',
             )
 
+        if self.cb_cc.currentText().upper() == 'YES':
+            try:
+                self._cc_bands = self._read_bands()
+            except ValueError as e:
+                QMessageBox.critical(self, 'Distance Bands', str(e))
+                return
         threading.Thread(target=self.generate_disp_task, daemon=True).start()
+
+    def _read_bands(self):
+        if self.e_cc_bands.text().strip():
+            return parse_bands(self.e_cc_bands.text())
+        lo = float(self.e_cc_min.text() or 0)
+        hi = float(self.e_cc_max.text() or 0)
+        if hi <= lo:
+            raise ValueError('Maximum distance must be greater than minimum distance.')
+        return [(lo, hi)]
 
     def generate_disp_task(self):
         try:
-            self._set_pb(0)
-            stn   = self.e_stn.text()
-            t_str = strftime('%Y%m%d_%H-%M')
-            self.path1      = os.path.join(self.save_dir, f'STN_{stn}SQSH-gen-_{t_str}.xlsx')
-            self.path2      = os.path.join(self.save_dir, f'STN_{stn}TOC-gen-_{t_str}.xlsx')
-            self.path_347   = os.path.join(self.save_dir, f'STN_{stn}347-gen-_{t_str}.xlsx')
-            self.path_516   = os.path.join(self.save_dir, f'STN_{stn}516-gen-_{t_str}.xlsx')
-            path_sqsh_xx    = os.path.join(self.save_dir, f'STN_{stn}SQSH_XX-gen-_{t_str}.xlsx')
-            path_sqsh_cc    = os.path.join(self.save_dir, f'STN_{stn}SQSH_CC-gen-_{t_str}.xlsx')
-            path_xx_pt_list = os.path.join(self.save_dir, f'STN_{stn}XX_PT_LIST-gen-_{t_str}.csv')
-            path_xx_mt_list = os.path.join(self.save_dir, f'STN_{stn}XX_MT_LIST-gen-_{t_str}.csv')
-
-            hs, end = [], []
-            for i in range(4):
-                hs_text  = self.e_hs[i].text().strip()
-                end_text = self.e_end[i].text().strip()
-                if hs_text and not end_text:
-                    # No direction name submitted — ignore this group
-                    hs.append([''])
-                    end.append('')
-                else:
-                    hs.append(
-                        [x.strip().upper() + '_'
-                         for x in hs_text.split(',') if x.strip()] or ['']
-                    )
-                    end.append(end_text.upper())
-            l_no_val   = int(self.cb_lno.currentText())
-            sqsh_m_yn  = self.cb_vvm.currentText().upper()
-            sqsh_cc_yn = self.cb_cc.currentText().upper()
-
-            def _criss_progress(pct):
-                self._set_pb(20 + (pct / 100.0) * 50)
-
-            toc = (read_toc_file(self.fp1)
-                   if not detect_toc_format(self.fp1)
-                   else read_formatted_toc(self.fp1))
-            toc = toc_format(toc, hs, end, l_no_val)
-            self._set_pb(10)
-
-            if sqsh_m_yn == 'YES':
-                if not self.fpvv:
-                    self._wsig.error.emit('Please select a VV file for corrected sqsh.')
-                    return
-                ltoc    = toc
-                vvlsqsh = re_vice_versa(self.fpvv)
-                vvlsqsh.fillna('', inplace=True)
-                write_table_file(vvlsqsh, self.path1, index=False)
-            else:
-                ltoc    = ixl_fn(toc, hs, end, l_no_val)
-                lsqsh   = sqsh_fn(ltoc, 'FROM-TO', 'NEW-LOCK')
-                vvlsqsh = vice_versa(lsqsh)
-                write_table_file(vvlsqsh, self.path1, index=True)
-            self._set_pb(20)
-
-            if sqsh_cc_yn == 'YES':
-                vvlsqsh, sqsh_xx, _ = criss_cross_mvt(
-                    toc, vvlsqsh, path_sqsh_xx, path_sqsh_cc,
-                    path_xx_pt_list, path_xx_mt_list,
-                    self.fp_ch,
-                    int(self.e_cc_min.text() or 0),
-                    int(self.e_cc_max.text() or 0),
-                    parent=None, progress_cb=_criss_progress,
-                )
-            else:
-                sqsh_xx = vvlsqsh.replace('X', '', regex=True)
-            self._set_pb(70)
-
-            l_toc = new_lck_gen_frm_sqsh(ltoc, vvlsqsh, 'NEW-LCK2')
-            dltoc = new_disp_gen_frm_sqsh(l_toc, vvlsqsh, 'NEW-DSP2')
-            write_table_file(dltoc, self.path2, index=False)
-            self._set_pb(80)
-
-            dmvt = disp_lit_fn(dltoc, 'NEW-DSP2', hs, end, l_no_val, sqsh_xx)
-            write_disp347_xlsx(dmvt, self.path_347, stn)
-            write_disp516_xlsx(dmvt, self.path_516, stn)
-
-            self._set_pb(100)
+            hs, end = parse_home_signals([e.text() for e in self.e_hs],
+                                         [e.text() for e in self.e_end])
+            sqsh_m_yn = self.cb_vvm.currentText().upper()
+            if sqsh_m_yn == 'YES' and not self.fpvv:
+                self._wsig.error.emit('Please select a VV file for corrected sqsh.')
+                return
+            criss = self.cb_cc.currentText().upper() == 'YES'
+            res = run_dispensation(
+                self.fp1, self.save_dir, self.e_stn.text(), hs, end,
+                int(self.cb_lno.currentText()),
+                vv_file=self.fpvv if sqsh_m_yn == 'YES' else '',
+                criss_cross=criss,
+                chainage_path=self.fp_ch,
+                bands=getattr(self, '_cc_bands', None) if criss else None,
+                progress=self._set_pb,
+            )
+            self.path1 = res.paths['SQSH']
+            first = next((k for k in res.paths if k.startswith('347')), '347')
+            sfx = first[3:]
+            self.path2 = res.paths.get('TOC' + sfx, '')
+            self.path_347 = res.paths.get('347' + sfx, '')
+            self.path_516 = res.paths.get('516' + sfx, '')
             self._wsig.success.emit()
         except Exception as e:
             debug_print(f'[ERROR] {e}\n{traceback.format_exc()}')

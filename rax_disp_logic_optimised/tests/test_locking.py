@@ -183,3 +183,22 @@ def test_direction_odd_signal_is_dn_even_is_up():
     rows = [dict(FROM=f, TO='S2', UN='1') for f in ['S3', 'CO21', 'SH7', 'S38', 'CO46', 'SH42', 'S10A', 'S11B']]
     toc = toc_format(make_toc(rows), [[''], [''], [''], ['']], ['', '', '', ''], 18)
     assert toc['DIR'].tolist() == ['DN', 'DN', 'DN', 'UP', 'UP', 'UP', 'UP', 'DN']
+
+
+def test_calling_on_route_with_overlap_points_uses_s_route_overlap_track_circuits():
+    # CO3 lists overlap point 107/108R but no OV-TC; S3's overlap has 107/108T.
+    # S19 runs over 107/108 (107/108T) -> CO3 must be locked against it.
+    # CO21 lists no overlap points, so it must NOT pick up S21's overlap TC.
+    _, vv, _, _ = run_pipeline([
+        dict(FROM='S3', TO='S19', UN='JKCL1D', **{'RT-PT-R': '101/102R', 'RT-TC': '3AT, 101T',
+             'OV-PT-R': '107/108R', 'OV-TC': '107/108T, 109T'}),
+        dict(FROM='CO3', TO='S19', UN='JKCL1D', **{'RT-PT-R': '101/102R', 'OV-PT-R': '107/108R'}),
+        dict(FROM='S19', TO='S31', UN='01D', **{'RT-PT-R': '107/108R', 'RT-TC': '107/108T, 110T'}),
+        dict(FROM='S21', TO='S33', UN='04D', **{'RT-PT-N': '119/120N', 'RT-TC': '119T',
+             'OV-PT-N': '131/132N', 'OV-TC': '132T'}),
+        dict(FROM='CO21', TO='S33', UN='04D', **{'RT-PT-N': '119/120N'}),
+        dict(FROM='SH40', TO='SH42', UN='77', **{'RT-PT-N': '131/132N', 'RT-TC': '132T'}),
+    ])
+    assert cell(vv, 'CO3_JKCL1D', 'S19_01D') == 'X'
+    assert cell(vv, 'S21_04D', 'SH40_77') == 'X'
+    assert cell(vv, 'CO21_04D', 'SH40_77') == ''

@@ -313,6 +313,12 @@ def read_formatted_toc(path: str) -> pd.DataFrame:
     e = ext(path)
     hr = _find_header_row(path, e)
     df = read_table_file(path, header=hr)
+    # A formatted TOC may be the output of an earlier run.  Its generated
+    # columns (old locking, dispensation, texts …) must not leak into this
+    # run, so they are cleared and recomputed.
+    for col in TOC_BLANK_COLS + ['NEW-DSP2', 'NEW-DISP2']:
+        if col in df.columns:
+            df[col] = ''
     return remap_extra_cols(df)
 
 

@@ -132,3 +132,46 @@ def test_one_sided_conflict_is_never_dispensed():
     ltoc = pd.DataFrame({'FROM-TO': list(vv.index)})
     lck = new_lck_gen_frm_sqsh(ltoc, vv, 'NEW-LCK2')['NEW-LCK2']
     assert 'B_2' in lck.iloc[0] and 'A_1' in lck.iloc[1]
+
+
+def test_calling_on_route_uses_track_circuits_of_its_s_route():
+    # CO21 has no RT-TC of its own; S21 to the same signal and line has 118T.
+    # SH33 shares only 118T, so it must be locked against CO21 as well.
+    ltoc, vv, dl, _ = run_pipeline([
+        dict(FROM='S21', TO='S31', UN='01D', **{'RT-PT-N': '113/114N', 'RT-TC': '113T, 118T'}),
+        dict(FROM='CO21', TO='S31', UN='01D', **{'RT-PT-N': '113/114N'}),
+        dict(FROM='SH33', TO='SH45', UN='39', **{'RT-PT-N': '131/132N', 'RT-TC': '118T, 132T'}),
+        dict(FROM='SH51', TO='SH53', UN='WCSL', **{'RT-PT-N': '155/156N', 'RT-TC': '155T'}),
+    ])
+    assert ltoc.set_index('FROM-TO').at['CO21_01D', 'TCK'] == '113T, 118T'
+    assert ltoc.set_index('FROM-TO').at['CO21_01D', 'RT-TC'] == ''   # input left as is
+    assert cell(vv, 'CO21_01D', 'SH33_39') == 'X'
+    assert frozenset(('CO21_01D', 'SH33_39')) not in allowed_pairs(dl)
+    assert frozenset(('CO21_01D', 'SH51_WCSL')) in allowed_pairs(dl)
+
+
+def test_calling_on_route_keeps_its_own_track_circuits_if_given():
+    from rax_disp_logic_optimised.processing.locking import co_track_circuits
+    toc = pd.DataFrame({'FROM': ['S5', 'CO5', 'CO7', 'S101', 'CO101'],
+                        'TO': ['S121', 'S121', 'S99', 'S137', 'S137'],
+                        'UN': ['01D', '01D', '2', '444', '444'],
+                        'RT-TC': ['5T, 208T', '01AT', '', '411/413T,444T', '_']})
+    # own TCs kept; no S route -> stays blank; '_' placeholder counts as blank
+    assert co_track_circuits(toc).tolist() == ['5T, 208T', '01AT', '', '411/413T,444T', '411/413T,444T']
+
+
+def test_formatted_toc_ignores_output_columns_of_an_earlier_run(tmp_path):
+    from rax_disp_logic_optimised.core.constants import ALL_TOC_COLS
+    from rax_disp_logic_optimised.io.preprocessor import detect_toc_format, read_formatted_toc
+    row = {c: '' for c in ALL_TOC_COLS}
+    row.update({'FROM': 'S3', 'TO': 'S21', 'GN': 'S3', 'UN': '01D', 'RT-PT-N': '101/102N',
+                'NEW-LOCK': 'S9_9', 'NEW-LCK2': 'CO3-DMABM1, SH38-02', 'TCK': '999T',
+                'END': 'OLD', 'MN-MOVT-LIT': 'old text'})
+    row['NEW-DSP2'] = 'S12_12'
+    path = tmp_path / 'toc.xlsx'
+    pd.DataFrame([row]).to_excel(path, index=False)
+    assert detect_toc_format(str(path))
+    df = read_formatted_toc(str(path)).fillna('')
+    for col in ['NEW-LOCK', 'NEW-LCK2', 'TCK', 'END', 'MN-MOVT-LIT', 'NEW-DSP2']:
+        assert (df[col].astype(str) == '').all(), col
+    assert df.at[0, 'RT-PT-N'] == '101/102N'

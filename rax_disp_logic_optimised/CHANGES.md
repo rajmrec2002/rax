@@ -3,7 +3,16 @@
 ## 2.0.1 – locking and dispensation fixes
 
 Tested on GRF (`GRF_TOC_Final_01.04.2026.xlsx` + `GRF_CH-Signal_Point.xlsx`,
-criss-cross 0–3000 m) and ADI. Regression tests: `make test` (19 tests).
+criss-cross 0–3000 m) and ADI. Regression tests: `make test` (22 tests).
+
+Check: the locking rules (point needed N by one route and R by the other,
+shared track circuit, same line) were re-derived independently from the raw
+TOC and compared pair by pair with the square sheet.
+
+| Station | Conflicting pairs (rules) | Missed before | Missed now | Printed as permitted before | now |
+|---|---|---|---|---|---|
+| GRF | 6 003 | 214 | 0 | 98 | 0 |
+| ADI | 45 772 | 1 620 | 0 | 2 351 | 0 |
 
 ### Conflict detection (`processing/locking.py`, `point_format.py`, `constants.py`)
 
@@ -17,6 +26,8 @@ criss-cross 0–3000 m) and ADI. Regression tests: `make test` (19 tests).
 | `D`/`M` stripped from the ends of track-circuit lists | First/last name corrupted (`DMAT` → `AT`) | Only whitespace/punctuation stripped |
 | Points limited to 3 digits | 2- or 4-digit points ignored | 1–4 digits |
 | Run-together isolation entries `142T135T` | Read as one name | Split like `121N111/112N` already was |
+| Calling-on routes have a blank (or `_`) RT-TC | CO routes never locked through track circuits | A CO<n> route with no RT-TC uses the RT-TC of the S<n> route to the same signal and line (TCK column shows them; RT-TC is left as entered) |
+| A formatted TOC saved by an earlier run carries its old NEW-LOCK / NEW-LCK2 / NEW-DSP2 / TCK / END / texts | Old results could leak into the new run | Generated columns are cleared when the TOC is read |
 
 ### Square sheet and dispensation (`processing/square_sheet.py`, `criss_cross.py`)
 
@@ -45,9 +56,7 @@ criss-cross 0–3000 m) and ADI. Regression tests: `make test` (19 tests).
 * Permitted main movements are matched by exact route name, not by a regex
   substring.
 
-### Not changed (needs a decision)
+### Not changed
 
-* Calling-on (CO) routes have a blank `RT-TC` in the TOC, so they only lock
-  through points and line number, not track circuits.
 * Home-signal auto-detect can pick wrong groups (on ADI it picked S87–S121).
   Check the groups before running.

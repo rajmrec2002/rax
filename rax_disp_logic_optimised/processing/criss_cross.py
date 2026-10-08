@@ -6,6 +6,7 @@ so all CPU cores work in parallel. On other platforms falls back to a
 single-threaded loop (still runs in the GUI's background thread).
 """
 
+import math
 import os
 import re
 import platform
@@ -22,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 # ── Global context populated before forking ───────────────────────────────
 _CRISS_CTX: dict = {}
+
+_MISSING = float('nan')
 
 
 # ── Local helpers ──────────────────────────────────────────────────────────
@@ -59,10 +62,18 @@ def _merge_iso_pts(rt_series: pd.Series, iso_series: pd.Series, suffix: str) -> 
 
 
 def _resolve_ch(ch_df: pd.DataFrame, sig: str, cache: dict) -> float:
-    """Silent 3-tier chainage lookup. Returns 0.0 if not found."""
+    """
+    Silent 3-tier chainage lookup.
+
+    Returns NaN when the signal/point is not in the chainage file.  NaN
+    makes every distance computed from it NaN, which fails both the
+    "within range" and "out of range" tests, so no distance remark is
+    produced and the pair stays a conflict.  (Returning 0.0 here used to
+    turn a missing chainage into a bogus distance that could pass.)
+    """
     sig = str(sig).strip()
     if not sig:
-        return 0.0
+        return _MISSING
     if sig in cache:
         return float(cache[sig])
     m = ch_df.loc[ch_df['GR_NO'] == sig, 'GR_CH']
@@ -86,12 +97,25 @@ def _resolve_ch(ch_df: pd.DataFrame, sig: str, cache: dict) -> float:
             m3 = ch_df.loc[ch_df['GR_NO'] == s_sig, 'GR_CH']
             if not m3.empty:
                 v = float(m3.iloc[-1]); cache[sig] = v; return v
-    return 0.0
+    cache[sig] = _MISSING
+    return _MISSING
 
 
 def _get_pt_ch_val(ch_df: pd.DataFrame, pt_key: str, cache: dict):
     v = _resolve_ch(ch_df, pt_key, cache)
-    return v, (v != 0.0)
+    return v, not math.isnan(v)
+
+
+def _missing_chainage(toc: pd.DataFrame, ch_df: pd.DataFrame) -> list:
+    """Signals and points used by the TOC that have no chainage entry."""
+    keys = set()
+    for col in ('FROM', 'TO'):
+        keys.update(v for v in toc[col].astype(str).str.strip() if v)
+    for col in ('RT-PT-N', 'RT-PT-R', 'OV-PT-N', 'OV-PT-R'):
+        for val in toc[col].astype(str):
+            keys.update('PT' + m for m in re.findall(r'(?<!\d)(\d{3})(?!\d)', val))
+    cache: dict = {}
+    return sorted(k for k in keys if math.isnan(_resolve_ch(ch_df, k, cache)))
 
 
 def _pt_protecting_tc(point_str: str, from_sig: str) -> Optional[str]:
@@ -657,11 +681,19 @@ def criss_cross_mvt(
         ch = ch.fillna('')
     else:
         ch = pd.DataFrame(columns=['GR_NO', 'GR_CH'])
-    ch['GR_CH'] = pd.to_numeric(ch['GR_CH'], errors='coerce').fillna(0.0)
+    ch['GR_CH'] = pd.to_numeric(ch['GR_CH'], errors='coerce')  # blank -> NaN = missing
     ch['GR_NO'] = ch['GR_NO'].astype(str).str.strip()
 
+    missing = _missing_chainage(toc, ch)
+    if missing:
+        logger.warning(
+            "Criss-cross: no chainage for %d signal(s)/point(s); pairs that "
+            "need them stay conflicting: %s", len(missing), ', '.join(missing))
+
     # ── Square sheet ─────────────────────────────────────────────────────
-    sqsh = sqsh.copy().fillna('').replace('~', '', regex=True)
+    # A one-sided conflict ('~') is still a conflict: never offer it for
+    # criss-cross dispensation.
+    sqsh = sqsh.copy().fillna('').replace('~', 'X', regex=False)
     sqsh_xx = sqsh.replace('X', '', regex=True)
     sqsh_cc = sqsh_xx.copy()
 
@@ -795,13 +827,6 @@ def criss_cross_mvt(
     write_table_file(sqsh_cc,    path_sqsh_cc,   index=True)
     write_table_file(xx_pt_list, path_xx_pt_list)
     write_table_file(xx_mt_list, path_xx_mt_list)
-
-    if _ch_provided and ch is not None:
-        try:
-            write_table_file(ch.drop_duplicates(subset=['GR_NO'], keep='last'),
-                             path_ch, index=False, header=True)
-        except Exception as e:
-            logger.warning("Could not update chainage file: %s", e)
 
     if progress_cb:
         progress_cb(100.0)

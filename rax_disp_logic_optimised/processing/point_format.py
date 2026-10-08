@@ -7,9 +7,11 @@ Handles: RT-PT-N, RT-PT-R, OV-PT-N, OV-PT-R, ISO point parsing.
 import re
 import pandas as pd
 
-_RE_POINT_NUM = re.compile(r'(\d{3}(?:/\d{3})?)')
-_RE_ISO_PT = re.compile(r'\d+[NR]')
-_RE_ISO_TC = re.compile(r'\d+T')
+# Point numbers: '101', '101/102', also 2- and 4-digit points such as '21/22'.
+_RE_POINT_NUM = re.compile(r'(?<!\d)(\d{1,4}(?:/\d{1,4})?)(?!\d)')
+# Isolation points keep the full crossover name: '111/112N' -> '111/112'.
+_RE_ISO_PT = re.compile(r'\d+(?:/\d+)?[NR]')
+_RE_ISO_TC = re.compile(r'\d+(?:/\d+)*[A-Z]*T')
 
 
 def pt_format(toc: pd.DataFrame, pt_column: str, NR: str) -> pd.Series:

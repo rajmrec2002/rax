@@ -124,8 +124,10 @@ RE_HOME_SIGNAL = re.compile(r'^(S\d+|CO\d+)$')
 # Numeric extraction from signal name
 RE_SIGNAL_NUM = re.compile(r'\d+')
 
-# Track circuit token pattern (e.g. 229T, 03AT)
-RE_TRACK_CIRCUIT = re.compile(r'^\d+[A-Z]*T$', re.IGNORECASE)
+# Track circuit token pattern (e.g. 229T, 03AT, 240/250T, 238/241/252T, DMAT)
+RE_TRACK_CIRCUIT = re.compile(
+    r'^(?!AXT$)(?:[A-Z0-9]*\d[A-Z0-9]*(?:/[A-Z0-9]+)*|[A-Z]{2,})T$', re.IGNORECASE
+)
 
 # Characters stripped from point/TC field ends during IXL processing
 STRIP_PUNCTUATION: str = r'\s.\_\n\t()DM'

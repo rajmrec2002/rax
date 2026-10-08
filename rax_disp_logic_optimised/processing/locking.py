@@ -10,13 +10,28 @@ import logging
 import pandas as pd
 from typing import List, Set, Dict
 
-from ..core.constants import STRIP_PUNCTUATION
-from ..processing.point_format import pt_format, iso_pt_format, iso_tc_fn
+from ..processing.point_format import pt_format, iso_pt_format
 from ..processing.track_circuit import tc_format_fn
 from ..utils.patterns import build_token_index, build_exact_token_index
-from ..utils.text_cleaning import batch_split, batch_strip
+from ..utils.text_cleaning import batch_split
 
 logger = logging.getLogger(__name__)
+
+_LIST_STRIP = ' \t\n.,_()'
+_RE_UN_LINE_SUFFIX = re.compile(r'(?<=\d)[DM]$')
+
+
+def un_key(un) -> str:
+    """
+    Normalise a route/line number for same-line comparison.
+
+    '01D', '01M', '1' -> '1';  'JKCL2D', 'JKCL2M' -> 'JKCL2';  'UMAB' -> 'UMAB'.
+    """
+    s = str(un).strip().upper()
+    if s in ('', 'NAN', 'NONE'):
+        return ''
+    s = _RE_UN_LINE_SUFFIX.sub('', s)
+    return s.lstrip('0') or s
 
 
 def ltoc_fn(toc: pd.DataFrame, ltoc: pd.DataFrame, i: int) -> pd.DataFrame:
@@ -42,58 +57,30 @@ def ixl_fn(xtoc: pd.DataFrame, hs, end, l_no) -> pd.DataFrame:
     iso_tc_orig = xtoc['ISO-TC'].copy()
     toc = xtoc.copy()
 
-    # Point and isolation formatting
+    # Point and isolation formatting.  iso_pt_format() fills ISO-PT-N /
+    # ISO-PT-R from the ISO column; the ISO track circuits were already
+    # extracted by toc_format() and must be kept as they are (re-deriving
+    # them from the points-only ISO column used to blank them out).
     toc['OV-PT-N'] = pt_format(toc, 'OV-PT-N', '')
     toc['OV-PT-R'] = pt_format(toc, 'OV-PT-R', '')
     toc['RT-PT-N'] = pt_format(toc, 'RT-PT-N', '')
     toc['RT-PT-R'] = pt_format(toc, 'RT-PT-R', '')
     toc['ISO'] = iso_pt_format(toc, 'ISO')
-    toc['ISO-TC'] = iso_tc_fn(toc, 'ISO')
-    toc['ISO'] = iso_pt_format(toc, 'ISO')
+    toc['ISO-TC'] = iso_tc_orig
     toc['TCK'] = tc_format_fn(toc)
 
     # ── Pre-extract all columns to native lists ───────────────────────────
-    strip = STRIP_PUNCTUATION
-    rtptn_list = batch_split(
-        toc['RT-PT-N'].astype(str).str.strip(strip), ', '
-    )
-    rtptr_list = batch_split(
-        toc['RT-PT-R'].astype(str).str.strip(strip), ', '
-    )
-    ovpn_list = batch_split(
-        toc['OV-PT-N'].astype(str).str.strip(strip), ', '
-    )
-    ovpr_list = batch_split(
-        toc['OV-PT-R'].astype(str).str.strip(strip), ', '
-    )
-    tck_list = batch_split(
-        toc['TCK'].astype(str).str.strip(strip), ', '
-    )
-    iso_tc_list = [
-        str(x).split(', ') for x in toc['ISO-TC'].tolist()
-    ]
-    un_list = toc['UN'].astype(str).str.strip(strip).tolist()
-
-    # Parse ISO points into N/R components
-    iso_clean = (
-        toc['ISO'].astype(str)
-        .str.replace(r'[ ,\^]', '', regex=True)
-        .fillna('')
-    )
-    rm = re.compile(r'(NIL|#|\^|T|@|\*)')
-
-    isopt_raw_list = []
-    isopn_list = []
-    isopr_list = []
-
-    for val in iso_clean.tolist():
-        tokens = rm.sub('', val).split(', ')
-        tokens = [t.strip() for t in tokens if t.strip()]
-        n_pts = [t.replace('N', '') for t in tokens if t.endswith('N')]
-        r_pts = [t.replace('R', '') for t in tokens if t.endswith('R')]
-        isopt_raw_list.append(tokens)
-        isopn_list.append(n_pts)
-        isopr_list.append(r_pts)
+    # Only whitespace/punctuation is stripped here: stripping letters such
+    # as D/M would corrupt names like 'DMAT' (track) or '01D' (route).
+    strip = _LIST_STRIP
+    rtptn_list = batch_split(toc['RT-PT-N'].astype(str).str.strip(strip), ', ')
+    rtptr_list = batch_split(toc['RT-PT-R'].astype(str).str.strip(strip), ', ')
+    ovpn_list = batch_split(toc['OV-PT-N'].astype(str).str.strip(strip), ', ')
+    ovpr_list = batch_split(toc['OV-PT-R'].astype(str).str.strip(strip), ', ')
+    isopn_list = batch_split(toc['ISO-PT-N'].astype(str).str.strip(strip), ', ')
+    isopr_list = batch_split(toc['ISO-PT-R'].astype(str).str.strip(strip), ', ')
+    tck_list = batch_split(toc['TCK'].astype(str).str.strip(strip), ', ')
+    un_list = [un_key(u) for u in toc['UN'].tolist()]
 
     # ── Build reverse indexes for O(1) lookup ────────────────────────────
     ov_pt_r_idx = build_token_index(toc['OV-PT-R'])
@@ -103,74 +90,36 @@ def ixl_fn(xtoc: pd.DataFrame, hs, end, l_no) -> pd.DataFrame:
     ov_pt_n_idx = build_token_index(toc['OV-PT-N'])
     iso_pt_n_idx = build_token_index(toc['ISO-PT-N'])
     tck_idx = build_exact_token_index(toc['TCK'])
-    un_idx = build_token_index(toc['UN'])
+    un_idx: Dict[str, Set[int]] = {}
+    for idx, key in enumerate(un_list):
+        if key:
+            un_idx.setdefault(key, set()).add(idx)
 
     n_rows = len(toc)
 
     for i in range(n_rows):
-        rtpn = rtptn_list[i]
-        rtpr = rtptr_list[i]
-        ovpn = ovpn_list[i]
-        ovpr = ovpr_list[i]
-        isopn = isopn_list[i]
-        isopr = isopr_list[i]
-        tck_i = tck_list[i]
-        iso_tck = iso_tc_list[i]
-        un_btn = un_list[i]
+        # A point needed Normal here conflicts with any route needing it
+        # Reverse (route, overlap or isolation), and vice versa.
+        ptn = [x for x in rtptn_list[i] + ovpn_list[i] + isopn_list[i] if x]
+        ptr = [x for x in rtptr_list[i] + ovpr_list[i] + isopr_list[i] if x]
+        tck_all = [x for x in tck_list[i] if x]
 
-        # Build combined token lists (strip N/R suffix for cross-column matching)
-        ptn = [re.sub(r'[NR]$', '', p) for p in rtpn + ovpn + isopn]
-        ptr = [re.sub(r'[NR]$', '', p) for p in rtpr + ovpr + isopr]
-        tck_all = tck_i + iso_tck
-
-        # Filter empty tokens
-        ptn = [x for x in ptn if x]
-        ptr = [x for x in ptr if x]
-        tck_all = [x for x in tck_all if x]
-        if not ptn:
-            ptn = ['']
-        if not ptr:
-            ptr = ['']
-        if not tck_all:
-            tck_all = ['']
-
-        # ── Use reverse indexes for O(1) lookup ──────────────────────────
         matched_indices: Set[int] = set()
+        for token in ptn:
+            matched_indices.update(ov_pt_r_idx.get(token, set()))
+            matched_indices.update(rt_pt_r_idx.get(token, set()))
+            matched_indices.update(iso_pt_r_idx.get(token, set()))
+        for token in ptr:
+            matched_indices.update(rt_pt_n_idx.get(token, set()))
+            matched_indices.update(ov_pt_n_idx.get(token, set()))
+            matched_indices.update(iso_pt_n_idx.get(token, set()))
+        for token in tck_all:
+            matched_indices.update(tck_idx.get(token, set()))
 
-        if ptr != [''] and ptn != ['']:
-            for token in ptn:
-                matched_indices.update(ov_pt_r_idx.get(token, set()))
-                matched_indices.update(rt_pt_r_idx.get(token, set()))
-                matched_indices.update(iso_pt_r_idx.get(token, set()))
-            for token in ptr:
-                matched_indices.update(rt_pt_n_idx.get(token, set()))
-                matched_indices.update(ov_pt_n_idx.get(token, set()))
-                matched_indices.update(iso_pt_n_idx.get(token, set()))
-            for token in tck_all:
-                matched_indices.update(tck_idx.get(token, set()))
-
-        elif ptr != [''] and ptn == ['']:
-            for token in ptr:
-                matched_indices.update(rt_pt_n_idx.get(token, set()))
-                matched_indices.update(ov_pt_n_idx.get(token, set()))
-                matched_indices.update(iso_pt_n_idx.get(token, set()))
-            for token in tck_all:
-                matched_indices.update(tck_idx.get(token, set()))
-
-        elif ptr == [''] and ptn != ['']:
-            for token in ptn:
-                matched_indices.update(ov_pt_r_idx.get(token, set()))
-                matched_indices.update(rt_pt_r_idx.get(token, set()))
-                matched_indices.update(iso_pt_r_idx.get(token, set()))
-            for token in tck_all:
-                matched_indices.update(tck_idx.get(token, set()))
-
-        else:
-            for token in tck_all:
-                matched_indices.update(tck_idx.get(token, set()))
-
-        # Always add UN matches
-        matched_indices.update(un_idx.get(un_btn, set()))
+        # Routes onto the same line (same UN, ignoring a trailing D/M and
+        # leading zeros) always conflict.
+        if un_list[i]:
+            matched_indices.update(un_idx.get(un_list[i], set()))
 
         # Build ltoc from matched indices (single iloc call)
         if matched_indices:

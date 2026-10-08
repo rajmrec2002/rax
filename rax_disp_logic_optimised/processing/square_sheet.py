@@ -6,6 +6,9 @@ and reconstruction.
 import numpy as np
 import pandas as pd
 
+# Square-sheet cell values that mean "these two routes conflict".
+CONFLICT_MARKS = ('X', '~')
+
 
 def sqsh_fn(toc: pd.DataFrame, frmto: str, lck: str) -> pd.DataFrame:
     """
@@ -33,7 +36,11 @@ def vice_versa(sqsh: pd.DataFrame) -> pd.DataFrame:
     """
     Apply vice-versa logic to square sheet:
       - '#' on diagonal (self)
-      - '~' where one side is 'X' and other is empty
+      - 'X' where both routes found the conflict
+      - '~' on BOTH cells where only one route found it (one-sided).
+
+    A one-sided conflict is still a conflict: '~' is a review marker, and
+    every consumer treats it like 'X' (see CONFLICT_MARKS).
     """
     sq = sqsh.fillna('').copy()
     arr = sq.values.copy()
@@ -43,7 +50,8 @@ def vice_versa(sqsh: pd.DataFrame) -> pd.DataFrame:
     diag = np.eye(l, dtype=bool)
     nonzero_off = (sub != '') & ~diag
     zero_off = (sub == '') & ~diag
-    sub[nonzero_off & zero_off.T] = '~'
+    one_sided = nonzero_off & zero_off.T
+    sub[one_sided | one_sided.T] = '~'
     arr[:l, :l] = sub
     return pd.DataFrame(arr, index=sq.index, columns=sq.columns)
 
@@ -119,8 +127,8 @@ def new_lck_gen_frm_sqsh(
     """Generate lock column from square sheet after vice-versa."""
     arr = sqsh.fillna('').values
     col_names = np.array([str(c) for c in sqsh.columns])
-    # Broadcast: keep column name where cell is 'X', else empty string
-    marked = np.where(arr == 'X', col_names, '')
+    # Keep column name where the pair conflicts ('X' or one-sided '~')
+    marked = np.where(np.isin(arr, CONFLICT_MARKS), col_names, '')
     ltoc[new_lck] = ['\n'.join(row).replace(' ', '') for row in marked]
     return ltoc
 
@@ -128,16 +136,22 @@ def new_lck_gen_frm_sqsh(
 def new_disp_gen_frm_sqsh(
     ltoc: pd.DataFrame, sqsh: pd.DataFrame, new_disp: str,
 ) -> pd.DataFrame:
-    """Generate dispensation column from square sheet after vice-versa."""
-    sqsh = sqsh.fillna("").replace('~', '', regex=True)
+    """
+    Generate dispensation column from square sheet after vice-versa.
+
+    A pair is listed only when NEITHER cell (i, j) nor (j, i) marks a
+    conflict, so a conflict recorded on one side only is never dispensed.
+    """
+    vals = sqsh.fillna('').astype(str).apply(lambda c: c.str.strip()).values
+    conflict = np.isin(vals, CONFLICT_MARKS)
     l = len(sqsh.index)
+    conflict = conflict[:l, :l] | conflict[:l, :l].T
     disp = pd.Series(index=range(l), dtype="object")
 
     for i in range(l):
         cols_for_row = []
         for j in range(i, l):
-            val = str(sqsh.iat[i, j]).strip()
-            if i != j and val != 'X':
+            if i != j and not conflict[i, j]:
                 cols_for_row.append(sqsh.columns[j])
             else:
                 cols_for_row.append('')

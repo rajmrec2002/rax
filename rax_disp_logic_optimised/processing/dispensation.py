@@ -85,15 +85,15 @@ def disp_lit_fn(toc, disp, hs, end, l_no, sqsh_xx):
                 sh_lines = []
                 for k, sh in enumerate(disp_sh_mvt):
                     sqsh_sh_j = disp_sh_mvt_frmto[k]
-                    sh_lines.append(sh + " (" + str(sqsh_xx.loc[sqsh_sh_i, sqsh_sh_j]) + ")")
+                    cond = str(sqsh_xx.loc[sqsh_sh_i, sqsh_sh_j]).strip()
+                    sh_lines.append(sh + (" (" + cond + ")" if cond else ""))
                 sh_mvt = "\n".join(sh_lines)
 
         if not mn_sig.str.contains('H', na=False).any():
             # ── 3.47 main movements ───────────────────────────────────────
             if disp_mn:
                 disp_mn = [x.strip() for x in disp_mn if x.strip()]
-                disp_mn_toc = toc[toc['FROM-TO'].str.contains(
-                    '|'.join(disp_mn), na=False)].copy()
+                disp_mn_toc = toc[toc['FROM-TO'].isin(set(disp_mn))].copy()
                 sub_movts = []
                 disp_idx = disp_mn_toc.index
 
@@ -119,7 +119,7 @@ def disp_lit_fn(toc, disp, hs, end, l_no, sqsh_xx):
                         x2 = (dir_k + " train may be " + rd_k
                               + disp_line(from_k, toc, l_no)
                               + " by taking off " + from_k
-                              + " up to " + to_k + " with")
+                              + " up to " + to_k)
 
                     ss1 = ss2 = ss3 = 0
                     if (len(disp_mn_toc.at[row_idx, 'RT-PT-N']) > 1
@@ -166,7 +166,7 @@ def disp_lit_fn(toc, disp, hs, end, l_no, sqsh_xx):
                           + " by taking off " + toc.at[toc.index[i], 'FROM'])
                     x1 = (x1 + disp_re_line(
                             re.sub(_RE_UN, '', toc.at[toc.index[i], 'UN']), l_no)
-                          + " up to " + toc.iloc[i, toc.columns.get_loc('TO')] + " with")
+                          + " up to " + toc.iloc[i, toc.columns.get_loc('TO')])
                 else:
                     x1 = (" When a " + toc.at[toc.index[i], 'DIR'] + " train is being "
                           + rd_main
@@ -177,7 +177,7 @@ def disp_lit_fn(toc, disp, hs, end, l_no, sqsh_xx):
                 ss1 = ss2 = ss3 = 0
                 if (len(toc.at[toc.index[i], 'RT-PT-N']) > 1
                         or len(toc.at[toc.index[i], 'RT-PT-R']) > 1):
-                    x1 = x1 + " route point/s"
+                    x1 = x1 + " with route point/s"
                     if len(toc.at[toc.index[i], 'RT-PT-N']) > 1:
                         ss1 = 1
                         x1 = x1 + " (" + toc.at[toc.index[i], 'RT-PT-N'] + ")"
@@ -215,18 +215,18 @@ def disp_lit_fn(toc, disp, hs, end, l_no, sqsh_xx):
                           + " by taking off " + toc.at[toc.index[i], 'FROM'])
                     x3 = (x3 + disp_re_line(
                             re.sub(_RE_UN, '', toc.at[toc.index[i], 'UN']), l_no)
-                          + " up to " + toc.iloc[i, toc.columns.get_loc('TO')] + " with")
+                          + " up to " + toc.iloc[i, toc.columns.get_loc('TO')])
                 else:
                     x3 = ("When a " + toc.at[toc.index[i], 'DIR'] + " train is being "
                           + rd_main
                           + disp_line(toc.at[toc.index[i], 'FROM'], toc, l_no)
                           + " by taking off " + toc.at[toc.index[i], 'FROM']
-                          + " up to " + toc.at[toc.index[i], 'TO'] + " with")
+                          + " up to " + toc.at[toc.index[i], 'TO'])
 
                 ss1 = ss2 = ss3 = 0
                 if (len(toc.at[toc.index[i], 'RT-PT-N']) > 1
                         or len(toc.at[toc.index[i], 'RT-PT-R']) > 1):
-                    x3 = x3 + " route point/s"
+                    x3 = x3 + " with route point/s"
                     if len(toc.at[toc.index[i], 'RT-PT-N']) > 1:
                         ss1 = 1
                         x3 = x3 + " (" + toc.at[toc.index[i], 'RT-PT-N'] + ")"
@@ -246,7 +246,7 @@ def disp_lit_fn(toc, disp, hs, end, l_no, sqsh_xx):
                 iso_tc_main  = disp_iso_tc_fn(toc, 'ISO-TC', i)
                 if iso_len_main > 1 or len(iso_tc_main) > 1:
                     x3 = x3 + " with following isolation"
-                    if iso_len_main > 1 and toc.at[toc.index[i], 'ISO'].strip().upper() == 'YES':
+                    if iso_len_main > 1:
                         ss3 = 1
                         x3 = x3 + " point/s (" + toc.at[toc.index[i], 'ISO'] + ")"
                     if len(iso_tc_main) > 1:
@@ -279,7 +279,7 @@ def disp_line(frm: str, toc: pd.DataFrame, l_no: str) -> str:
     try:
         line_num = int(digits)
         ref_line = int(l_no)
-        return f" from line No.- {line_num} " if line_num <= ref_line else ""
+        return f" from line No.- {line_num}" if line_num <= ref_line else ""
     except ValueError:
         return ""
 
@@ -296,7 +296,7 @@ def disp_re_line(un: str, l_no: str) -> str:
     try:
         l = int(l)
         l_no = int(l_no)
-        return f" for line No.- {l} " if l <= l_no else ""
+        return f" for line No.- {l}" if l <= l_no else ""
     except ValueError:
         return ""
 

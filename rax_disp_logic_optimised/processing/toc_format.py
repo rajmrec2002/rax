@@ -45,7 +45,7 @@ def toc_format(toc: pd.DataFrame, hs, end, l_n) -> pd.DataFrame:
     # Insert comma separator in ISO for concatenated points
     toc['ISO'] = (
         toc['ISO'].astype(str)
-        .str.replace(r'(?<=[0-9])[NR](?=[0-9])', lambda m: m.group() + ', ', regex=True)
+        .str.replace(r'(?<=[0-9])[NRT](?=[0-9])', lambda m: m.group() + ', ', regex=True)
         .str.replace(r',\s*,', ', ', regex=True)
         .str.strip(', ')
     )

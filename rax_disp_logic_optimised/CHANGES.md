@@ -3,7 +3,7 @@
 ## 2.0.1 – locking and dispensation fixes
 
 Tested on GRF (`GRF_TOC_Final_01.04.2026.xlsx` + `GRF_CH-Signal_Point.xlsx`,
-criss-cross 0–3000 m) and ADI. Regression tests: `make test` (23 tests).
+criss-cross 0–3000 m) and ADI. Regression tests: `make test` (25 tests).
 
 Check: the locking rules (point needed N by one route and R by the other,
 shared track circuit, same line) were re-derived independently from the raw
@@ -55,6 +55,10 @@ TOC and compared pair by pair with the square sheet.
   number.
 * Permitted main movements are matched by exact route name, not by a regex
   substring.
+* Criss-cross distance notes are separated from the movement text by a
+  space (was `…121)[Dist.` / `vice versa.if OV point`), and the notes no
+  longer contain double spaces (`to  FM`) or `S30(CH-…)`.
+* Shunt lines print only the point groups a route has (no empty `& ()`).
 * Direction rule (odd signal number = DN, even = UP) now uses the signal
   number, not the last character, so names like `S10A` are classified correctly.
 

@@ -60,3 +60,29 @@ def test_516_text_lists_isolation_points():
     assert 'with following isolation point/s (171, 173/174)' in sh16
     assert 'SH40 to SH42 with route point/s (151/152N) and vice-versa' in sh16
     assert '()' not in sh16
+
+
+def test_shunt_line_without_reverse_points_has_no_empty_brackets():
+    rows = ROWS + [dict(FROM='SH44', TO='SH46', UN='WCSL', **{'RT-PT-N': '157/158N', 'RT-TC': '157T'})]
+    _, _, _, lit = run_pipeline(rows, hs=HS, end=END)
+    sh = lit.set_index('FROM-TO').at['S16_16_0', 'SH-DISP-LIT']
+    assert 'SH44 to SH46 with route point/s (157/158N) and vice-versa' in sh
+    assert '()' not in sh and '& (' not in sh.split('SH44')[1].split('\n')[0]
+
+
+def test_distance_condition_is_separated_from_movement_text():
+    from helpers import make_toc
+    from rax_disp_logic_optimised.processing.dispensation import disp_lit_fn
+    from rax_disp_logic_optimised.processing.locking import ixl_fn
+    from rax_disp_logic_optimised.processing.square_sheet import (
+        new_disp_gen_frm_sqsh, new_lck_gen_frm_sqsh, sqsh_fn, vice_versa)
+    from rax_disp_logic_optimised.processing.toc_format import toc_format
+    toc = toc_format(make_toc(ROWS), HS, END, 18)
+    ltoc = ixl_fn(toc, HS, END, 18)
+    vv = vice_versa(sqsh_fn(ltoc, 'FROM-TO', 'NEW-LOCK'))
+    dl = new_disp_gen_frm_sqsh(new_lck_gen_frm_sqsh(ltoc, vv, 'NEW-LCK2'), vv, 'NEW-DSP2')
+    xx = vv.replace('X', '', regex=True)
+    xx.loc['S14_14', 'S3_01D'] = '[Dist. from S2 (CH-10.0) to FM of Point No.-101 (CH-90.0) is (80.0M)]'
+    lit = disp_lit_fn(dl, 'NEW-DSP2', HS, END, 18, xx).set_index('FROM-TO')
+    sub = lit.at['S14_14_0', 'SUB-MOVT-LIT']
+    assert 'and vice versa. [Dist. from S2' in sub

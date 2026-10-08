@@ -421,10 +421,10 @@ def _criss_row_worker(i: int) -> list:
                                 if not fnd: continue
                                 d2 = abs(round(s_ch - p_ch, 2))
                                 if d2 > mn and d2 <= mx and q1 == 1:
-                                    d2l = f'[Dist. from {yto} (CH-{round(abs(s_ch),2)}) to  FM of Point No.-{yk} (CH-{round(abs(p_ch),2)}) is ({d2}M)]'
+                                    d2l = f'[Dist. from {yto} (CH-{round(abs(s_ch),2)}) to FM of Point No.-{yk} (CH-{round(abs(p_ch),2)}) is ({d2}M)]'
                                     cv = d1l + ' & ' + d2l; q2 = 1
                                 elif d2 > mn and d2 <= mx and q1 == 0:
-                                    d2l = f'[Dist. from {yto} (CH-{round(abs(s_ch),2)}) to  FM of Point No.-{yk} (CH-{round(abs(p_ch),2)}) is ({d2}M)]'
+                                    d2l = f'[Dist. from {yto} (CH-{round(abs(s_ch),2)}) to FM of Point No.-{yk} (CH-{round(abs(p_ch),2)}) is ({d2}M)]'
                                     cv = d2l; q2 = 1
                                 elif d2 < mn or d2 > mx:
                                     cv = ''; xw2 = 1
@@ -436,7 +436,7 @@ def _criss_row_worker(i: int) -> list:
                                 if not fnd: continue
                                 d3 = abs(round(s_ch - p_ch, 2))
                                 if d3 > mn and d3 <= mx:
-                                    d3l = f'[Dist. from {xto} (CH-{round(abs(s_ch),2)}) to  FM of Point No.-{xk} (CH-{round(abs(p_ch),2)}) is ({d3}M)]'
+                                    d3l = f'[Dist. from {xto} (CH-{round(abs(s_ch),2)}) to FM of Point No.-{xk} (CH-{round(abs(p_ch),2)}) is ({d3}M)]'
                                     cv = d3l; q3 = 1
                                 else:
                                     cv = ''; xw3 = 1
@@ -448,7 +448,7 @@ def _criss_row_worker(i: int) -> list:
                             if not fnd: continue
                             d4 = abs(round(s_ch - p_ch, 2))
                             if d4 > mn and d4 <= mx:
-                                d4l = f'[Dist. from {yto} (CH-{round(abs(s_ch),2)}) to  FM of Point No.-{yk} (CH-{round(abs(p_ch),2)}) is ({d4}M)]'
+                                d4l = f'[Dist. from {yto} (CH-{round(abs(s_ch),2)}) to FM of Point No.-{yk} (CH-{round(abs(p_ch),2)}) is ({d4}M)]'
                                 cv = d4l; q4 = 1
                             else:
                                 cv = ''; xw4 = 1
@@ -524,7 +524,7 @@ def _criss_row_worker(i: int) -> list:
                             ych7 = _resolve_ch(ch, yto, cache)
                             d7 = abs(round(xch7 - ych7, 2))
                             if d7 > mn and d7 <= mx:
-                                _b7 = f'[Dist. from Signal {xto} (CH-{round(abs(xch7),2)}) to Signal {yto}(CH-{round(abs(ych7),2)}) is ({d7}M)]'
+                                _b7 = f'[Dist. from Signal {xto} (CH-{round(abs(xch7),2)}) to Signal {yto} (CH-{round(abs(ych7),2)}) is ({d7}M)]'
                                 if cv == '':
                                     d7l = _b7; cv = d7l; q7 = 1
                                 elif (valid := [v for v in (d1, d3, d5) if v > 0]) and d7 < min(valid):
@@ -544,7 +544,7 @@ def _criss_row_worker(i: int) -> list:
                             ych8 = _resolve_ch(ch, yto, cache)
                             d8 = abs(round(ych8 - xch8, 2))
                             if d8 > mn and d8 <= mx:
-                                _b8 = f'[Dist. from Signal {yto}(CH-{round(abs(ych8),2)}) to Signal {xto}(CH-{round(abs(xch8),2)}) is ({d8}M)]'
+                                _b8 = f'[Dist. from Signal {yto} (CH-{round(abs(ych8),2)}) to Signal {xto} (CH-{round(abs(xch8),2)}) is ({d8}M)]'
                                 if cv == '':
                                     d8l = _b8; cv = d8l; q8 = 1
                                 elif (d2+d4+d6) > 0 and d8 < _min_dist_val(d2l+d4l+d6l):
@@ -592,7 +592,7 @@ def _criss_row_worker(i: int) -> list:
                         d10 = abs(round(xf_ch - ych10, 2))
                         if (d10 > mn and d10 <= mx
                             and ((ych10 > xf_ch and ydir == 'DN') or (ych10 < xf_ch and ydir == 'UP'))):
-                            _b10 = f'[Dist. from {yto}(CH-{round(abs(ych10),2)}) to {xf}(CH-{round(abs(xf_ch),2)}) is ({d10}M)]'
+                            _b10 = f'[Dist. from {yto} (CH-{round(abs(ych10),2)}) to {xf} (CH-{round(abs(xf_ch),2)}) is ({d10}M)]'
                             if cv == '':
                                 d10l = _b10; cv = d10l; q10 = 1
                             elif (d2+d4+d6+d8) > 0 and d10 < _min_dist_val(d2l+d4l+d6l+d8l):

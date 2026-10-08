@@ -58,26 +58,18 @@ def disp_lit_fn(toc, disp, hs, end, l_no, sqsh_xx):
             disp_toc_sh = toc[toc['FROM-TO'].str.fullmatch(
                 '|'.join(disp_sh), na=False)].copy()
             if not disp_toc_sh.empty:
-                sh_text = (
-                    disp_toc_sh['DIR'].values
-                    + " shunting movement from shunt signal "
-                    + disp_toc_sh['FROM'].values
-                    + " to " + disp_toc_sh['TO'].values
-                )
-                _rpt_n = disp_toc_sh['RT-PT-N'].fillna('').astype(str)
-                _rpt_r = disp_toc_sh['RT-PT-R'].fillna('').astype(str)
-                if (_rpt_n != '').any() or (_rpt_r != '').any():
-                    ss = 0
-                    sh_text = sh_text + " with route point/s "
-                    if (_rpt_n != '').any():
-                        ss = 1
-                        sh_text = sh_text + "(" + _rpt_n.values + ")"
-                    if (_rpt_r != '').any():
-                        if ss == 1:
-                            sh_text = sh_text + " & (" + _rpt_r.values + ")"
-                        else:
-                            sh_text = sh_text + " (" + _rpt_r.values + ")"
-                sh_text = sh_text + " and vice-versa"
+                # Built per row: a route without Reverse (or Normal) points
+                # must not get an empty "& ()" from another route's points.
+                sh_text = []
+                for _, r in disp_toc_sh.iterrows():
+                    rpt_n = str(r['RT-PT-N']).strip()
+                    rpt_r = str(r['RT-PT-R']).strip()
+                    txt = (r['DIR'] + " shunting movement from shunt signal "
+                           + r['FROM'] + " to " + r['TO'])
+                    pts = [f"({p})" for p in (rpt_n, rpt_r) if p]
+                    if pts:
+                        txt += " with route point/s " + " & ".join(pts)
+                    sh_text.append(txt + " and vice-versa")
                 disp_toc_sh['FROM-TO-SIG'] = sh_text
                 disp_sh_mvt     = disp_toc_sh['FROM-TO-SIG'].values
                 disp_sh_mvt_frmto = disp_toc_sh['FROM-TO'].values
@@ -151,7 +143,9 @@ def disp_lit_fn(toc, disp, hs, end, l_no, sqsh_xx):
                         x2 = x2 + (" & track/s (" if ss3 else " track/s (") + iso_tc + ")"
                     if rd_k == 'received':
                         x2 = x2 + " and vice versa."
-                    x2 = x2 + sqsh_xx.loc[sqsh_i, sqsh_j]
+                    cond = str(sqsh_xx.loc[sqsh_i, sqsh_j]).strip()
+                    if cond:
+                        x2 = x2 + " " + cond
                     sub_movts.append(x2)
 
                 x2 = "\n".join(sub_movts)

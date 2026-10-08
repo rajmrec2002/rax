@@ -41,6 +41,21 @@ def _has_alnum(val) -> bool:
     return bool(_RE_ALNUM.search(str(val)))
 
 
+_RE_POST = re.compile(r'^(?:S|CO|SH|A)(\d+[A-Z]*)$')
+
+
+def post_key(signal) -> str:
+    """
+    Signal post of a route's starting signal.
+
+    S5, CO5, SH5 and A5 are on the same post -> '5'.  Routes from the same
+    post can never be set at the same time.  Returns '' if the name does
+    not follow the S/CO/SH/A + number pattern.
+    """
+    m = _RE_POST.match(str(signal).strip().upper())
+    return m.group(1) if m else ''
+
+
 def co_track_circuits(toc: pd.DataFrame, col: str = 'RT-TC', need=None) -> pd.Series:
     """
     Track-circuit column `col` with calling-on routes filled in from their
@@ -137,6 +152,7 @@ def ixl_fn(xtoc: pd.DataFrame, hs, end, l_no) -> pd.DataFrame:
     isopr_list = batch_split(toc['ISO-PT-R'].astype(str).str.strip(strip), ', ')
     tck_list = batch_split(toc['TCK'].astype(str).str.strip(strip), ', ')
     un_list = [un_key(u) for u in toc['UN'].tolist()]
+    post_list = [post_key(f) for f in toc['FROM'].tolist()]
 
     # ── Build reverse indexes for O(1) lookup ────────────────────────────
     ov_pt_r_idx = build_token_index(toc['OV-PT-R'])
@@ -150,6 +166,10 @@ def ixl_fn(xtoc: pd.DataFrame, hs, end, l_no) -> pd.DataFrame:
     for idx, key in enumerate(un_list):
         if key:
             un_idx.setdefault(key, set()).add(idx)
+    post_idx: Dict[str, Set[int]] = {}
+    for idx, key in enumerate(post_list):
+        if key:
+            post_idx.setdefault(key, set()).add(idx)
 
     n_rows = len(toc)
 
@@ -176,6 +196,11 @@ def ixl_fn(xtoc: pd.DataFrame, hs, end, l_no) -> pd.DataFrame:
         # leading zeros) always conflict.
         if un_list[i]:
             matched_indices.update(un_idx.get(un_list[i], set()))
+
+        # Routes from signals on the same post (S5, CO5, SH5, A5) always
+        # conflict with each other.
+        if post_list[i]:
+            matched_indices.update(post_idx.get(post_list[i], set()))
 
         # Build ltoc from matched indices (single iloc call)
         if matched_indices:

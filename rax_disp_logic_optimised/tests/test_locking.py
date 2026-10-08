@@ -202,3 +202,30 @@ def test_calling_on_route_with_overlap_points_uses_s_route_overlap_track_circuit
     assert cell(vv, 'CO3_JKCL1D', 'S19_01D') == 'X'
     assert cell(vv, 'S21_04D', 'SH40_77') == 'X'
     assert cell(vv, 'CO21_04D', 'SH40_77') == ''
+
+
+def test_post_key():
+    from rax_disp_logic_optimised.processing.locking import post_key
+    assert post_key('S5') == post_key('CO5') == post_key('SH5') == post_key('A5') == '5'
+    assert post_key('S10A') == '10A' and post_key('S10') == '10'
+    assert post_key('S15') != post_key('S5')
+    assert post_key('LF') == '' and post_key('') == ''
+
+
+def test_routes_from_the_same_signal_post_always_conflict():
+    # Nothing shared except the post: S5 / CO5 / SH5 / A5 must still lock,
+    # while S7 (another post) stays free.
+    _, vv, dl, _ = run_pipeline([
+        dict(FROM='S5', TO='S121', UN='01D', **{'RT-PT-N': '207/208N', 'RT-TC': '208T'}),
+        dict(FROM='CO5', TO='S113', UN='06D', **{'RT-PT-N': '301/302N', 'RT-TC': '301T'}),
+        dict(FROM='SH5', TO='SH9', UN='77', **{'RT-PT-N': '401/402N', 'RT-TC': '401T'}),
+        dict(FROM='A5', TO='S99', UN='88', **{'RT-PT-N': '501/502N', 'RT-TC': '501T'}),
+        dict(FROM='S7', TO='S87', UN='13', **{'RT-PT-N': '601/602N', 'RT-TC': '601T'}),
+    ])
+    same = ['S5_01D', 'CO5_06D', 'SH5_77', 'A5_88']
+    for a in same:
+        for b in same:
+            if a != b:
+                assert cell(vv, a, b) == 'X', (a, b)
+        assert cell(vv, a, 'S7_13') == ''
+    assert frozenset(('S5_01D', 'SH5_77')) not in allowed_pairs(dl)

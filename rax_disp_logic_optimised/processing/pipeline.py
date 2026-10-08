@@ -115,7 +115,7 @@ def run_dispensation(
     prog(0)
     toc = read_formatted_toc(toc_path) if detect_toc_format(toc_path) else read_toc_file(toc_path)
     toc = toc_format(toc, hs, end, l_no)
-    checks = [toc_data_checks(toc)]
+    checks = [toc_data_checks(toc).assign(SET='TOC data')]
     prog(10)
 
     res.paths['SQSH'] = p('SQSH')
@@ -135,7 +135,8 @@ def run_dispensation(
         dltoc = new_disp_gen_frm_sqsh(l_toc, sqsh, 'NEW-DSP2')
         res.paths['TOC' + suffix] = p('TOC' + suffix)
         write_table_file(dltoc, res.paths['TOC' + suffix], index=False)
-        checks.append(permitted_pair_checks(dltoc).assign(SET=suffix.strip('_') or 'all'))
+        checks.append(permitted_pair_checks(dltoc).assign(
+            SET='permitted pairs ' + (suffix.strip('_') or '(no criss-cross)')))
         dmvt = disp_lit_fn(dltoc, 'NEW-DSP2', hs, end, l_no, sqsh_xx)
         res.paths['347' + suffix] = p('347' + suffix)
         res.paths['516' + suffix] = p('516' + suffix)

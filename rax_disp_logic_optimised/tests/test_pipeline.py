@@ -98,3 +98,15 @@ def test_pipeline_writes_one_document_set_per_distance_band(tmp_path):
             assert key in res.paths, key
             assert (tmp_path / res.paths[key].split('/')[-1]).exists()
     assert pd.read_excel(ch)['GR_CH'].tolist() == [0.0, 50.0, 100.0, 400.0, 900.0, 1000.0]
+
+
+def test_toc_checks_flag_shared_overlap_label():
+    toc = _fmt([
+        dict(FROM='S5', TO='S113', UN='06D', **{'RT-PT-N': '207/208N', 'RT-TC': '208T',
+             'OV-SET': 'OV1-113', 'OV-PT-N': '397/398N', 'OV-PT-R': '395/396R', 'OV-TC': '397T'}),
+        dict(FROM='S5', TO='S113', UN='06M', **{'RT-PT-N': '207/208N', 'RT-TC': '208T',
+             'OV-SET': 'OV1-113', 'OV-PT-R': '395/396R, 397/398R', 'OV-TC': '398T'}),
+    ])
+    c = toc_data_checks(toc)
+    hit = c[c['CHECK'] == 'Same overlap label for different overlaps']
+    assert len(hit) == 1 and 'S5_06D' in hit.iat[0, 0] and 'S5_06M' in hit.iat[0, 0]

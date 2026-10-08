@@ -70,6 +70,16 @@ def toc_data_checks(toc: pd.DataFrame) -> pd.DataFrame:
             rows.append((route, 'Overlap points but no overlap track circuit (OV-TC)',
                          ', '.join(ov_pts)))
 
+    # Same signal, same destination and same overlap label but different
+    # overlap points: the printed 3.47 / 5.16 headings cannot tell them apart.
+    tmp = toc.assign(_ov=toc['OV-SET'].astype(str).str.strip(),
+                     _pts=toc['OV-PT-N'].astype(str) + ' | ' + toc['OV-PT-R'].astype(str))
+    tmp = tmp[tmp['_ov'].str.upper().str.startswith('OV')]
+    for (frm, to, ov), g in tmp.groupby(['FROM', 'TO', '_ov']):
+        if len(g) > 1 and g['_pts'].nunique() > 1:
+            rows.append((', '.join(g['FROM-TO']), 'Same overlap label for different overlaps',
+                         f'{ov}: ' + '; '.join(f'{r} = {p}' for r, p in zip(g['FROM-TO'], g['_pts']))))
+
     return pd.DataFrame(rows, columns=['ROUTE', 'CHECK', 'DETAIL'])
 
 

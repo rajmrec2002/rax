@@ -3,7 +3,7 @@
 ## 2.0.1 – locking and dispensation fixes
 
 Tested on GRF (`GRF_TOC_Final_01.04.2026.xlsx` + `GRF_CH-Signal_Point.xlsx`,
-criss-cross 0–3000 m) and ADI. Regression tests: `make test` (32 tests).
+criss-cross 0–3000 m) and ADI. Regression tests: `make test` (33 tests).
 
 Check: the locking rules (point needed N by one route and R by the other,
 shared track circuit, same line) were re-derived independently from the raw
@@ -74,7 +74,9 @@ TOC and compared pair by pair with the square sheet.
 * **TOC data check** (`STN_<stn>TOC-CHECK-gen-…xlsx`, every run): route points
   with no track circuit in RT-TC, overlap points with no OV-TC, CO routes with
   nothing to inherit, and permitted pairs where one route runs head-on to the
-  other's start signal. These are the TOC gaps that can make a conflicting
+  other's start signal, and routes with the same signal, destination and
+  overlap label but different overlap points (their printed headings read the
+  same, e.g. ADI S5_06D / S5_06M both `OV1-113`). These are the TOC gaps that can make a conflicting
   movement look permitted.
 * `processing/pipeline.py` (`run_dispensation`) holds the whole "Run Fn"
   sequence; the GUI calls it, so batch runs and the GUI give identical output.

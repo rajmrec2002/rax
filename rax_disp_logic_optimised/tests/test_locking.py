@@ -175,3 +175,11 @@ def test_formatted_toc_ignores_output_columns_of_an_earlier_run(tmp_path):
     for col in ['NEW-LOCK', 'NEW-LCK2', 'TCK', 'END', 'MN-MOVT-LIT', 'NEW-DSP2']:
         assert (df[col].astype(str) == '').all(), col
     assert df.at[0, 'RT-PT-N'] == '101/102N'
+
+
+def test_direction_odd_signal_is_dn_even_is_up():
+    from helpers import make_toc
+    from rax_disp_logic_optimised.processing.toc_format import toc_format
+    rows = [dict(FROM=f, TO='S2', UN='1') for f in ['S3', 'CO21', 'SH7', 'S38', 'CO46', 'SH42', 'S10A', 'S11B']]
+    toc = toc_format(make_toc(rows), [[''], [''], [''], ['']], ['', '', '', ''], 18)
+    assert toc['DIR'].tolist() == ['DN', 'DN', 'DN', 'UP', 'UP', 'UP', 'UP', 'DN']

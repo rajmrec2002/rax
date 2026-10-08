@@ -58,12 +58,12 @@ def toc_format(toc: pd.DataFrame, hs, end, l_n) -> pd.DataFrame:
         toc[['RT-TC', 'OV-TC', 'ISO-TC']].replace('/AXT', '', regex=True)
     )
 
-    # Direction (fully vectorized)
+    # Direction from the signal number: odd -> DN, even -> UP
+    # (uses the last number in the name, so 'S10A' or 'SH7' work too).
     frm = toc['FROM'].astype(str).str.strip()
-    last = frm.str[-1:]
-    digit_mask = last.str.match(r'^\d$', na=False)
-    digit_val = pd.to_numeric(last.where(digit_mask), errors='coerce').fillna(0).astype(int)
-    toc['DIR'] = np.where(digit_mask, np.where(digit_val % 2 == 0, 'UP', 'DN'), frm.str[:2].values)
+    num = pd.to_numeric(frm.str.extract(r'(\d+)\D*$', expand=False), errors='coerce')
+    toc['DIR'] = np.where(num.isna(), frm.str[:2].values,
+                          np.where(num.fillna(0).astype(int) % 2 == 0, 'UP', 'DN'))
 
     toc['SH-DISP-LIT'] = ''
     toc['MN-MOVT-LIT'] = ''

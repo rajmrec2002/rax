@@ -110,3 +110,11 @@ def test_toc_checks_flag_shared_overlap_label():
     c = toc_data_checks(toc)
     hit = c[c['CHECK'] == 'Same overlap label for different overlaps']
     assert len(hit) == 1 and 'S5_06D' in hit.iat[0, 0] and 'S5_06M' in hit.iat[0, 0]
+
+
+def test_toc_checks_list_unrecognised_track_circuit_entries():
+    toc = _fmt([dict(FROM='S1', TO='S11', UN='NLT1D', **{'RT-PT-R': '201/202R',
+                     'RT-TC': '1_2T, 201T', 'OV-PT-N': '207/208N', 'OV-TC': '207T, NLT2'})])
+    c = toc_data_checks(toc)
+    hit = c[c['CHECK'].str.startswith('Track-circuit entry not recognised')]
+    assert len(hit) == 1 and hit.iat[0, 2] == 'OV-TC: NLT2'

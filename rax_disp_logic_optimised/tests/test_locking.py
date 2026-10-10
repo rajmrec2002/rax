@@ -229,3 +229,17 @@ def test_routes_from_the_same_signal_post_always_conflict():
                 assert cell(vv, a, b) == 'X', (a, b)
         assert cell(vv, a, 'S7_13') == ''
     assert frozenset(('S5_01D', 'SH5_77')) not in allowed_pairs(dl)
+
+
+def test_underscore_track_circuit_names_are_read_and_lock():
+    from rax_disp_logic_optimised.core.constants import RE_TRACK_CIRCUIT
+    for tc in ['1_2T', '3_4T', '01_01AT', '10_10AT']:
+        assert RE_TRACK_CIRCUIT.match(tc), tc
+    _, vv, _, _ = run_pipeline([
+        dict(FROM='S1', TO='S11', UN='NLT1D', **{'RT-PT-R': '201/202R', 'RT-TC': '1_2T, 201T'}),
+        dict(FROM='S2', TO='ML', UN='NL', **{'RT-TC': '1_2T'}),
+        dict(FROM='S5', TO='S83', UN='01D', **{'RT-PT-N': '205/206N', 'RT-TC': '205T, 01_01AT'}),
+        dict(FROM='SH57', TO='SH83', UN='99', **{'RT-PT-N': '301/302N', 'RT-TC': '01_01AT'}),
+    ])
+    assert cell(vv, 'S1_NLT1D', 'S2_NL') == 'X'
+    assert cell(vv, 'S5_01D', 'SH57_99') == 'X'

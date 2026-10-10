@@ -12,7 +12,7 @@ from time import strftime
 from typing import Optional
 
 from PySide6.QtCore import Qt, QTimer, Signal, QObject, Slot
-from PySide6.QtGui import QColor, QPainter, QPainterPath
+from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
     QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
@@ -27,6 +27,14 @@ from ..core.constants import TOC_INPUT_COLS, TOC_BLANK_COLS
 from ..processing.auto_detect import auto_detect_home_signals
 from ..processing.toc_format import toc_format
 from ..processing.pipeline import parse_bands, parse_home_signals, run_dispensation
+
+# App / window icon (Indian Railways logo)
+_ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'app_icon.png')
+
+
+def _app_icon() -> QIcon:
+    return QIcon(_ICON_PATH) if os.path.isfile(_ICON_PATH) else QIcon()
+
 
 # ── Colour palette ─────────────────────────────────────────────────────────
 _BG        = '#f1f5f9'
@@ -105,6 +113,7 @@ class RaxLogicApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('Physical Progress Module')
+        self.setWindowIcon(_app_icon())
 
         self.fp1 = self.fp_ch = self.fpvv = self.save_dir = ''
         self.path_347 = self.path_516 = self.path1 = self.path2 = ''
@@ -214,6 +223,12 @@ class RaxLogicApp(QMainWindow):
         self.lbl_time.setStyleSheet('color: #94a3b8; font-size: 11pt;')
         self.lbl_time.setAlignment(
             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        if os.path.isfile(_ICON_PATH):
+            logo = QLabel()
+            logo.setPixmap(_app_icon().pixmap(44, 44))
+            logo.setFixedSize(48, 48)
+            lay.addWidget(logo)
+            lay.addSpacing(6)
         lay.addLayout(left, 1)
         lay.addWidget(self.lbl_time)
         self._clock = QTimer(self)
@@ -762,7 +777,17 @@ def launch_app(config_path: Optional[str] = None) -> None:
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
 
+    if platform.system() == 'Windows':
+        # Give the app its own taskbar entry so Windows shows our icon,
+        # not the Python one.
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('RaxLogic.PPM')
+        except Exception:
+            pass
+
     app = QApplication.instance() or QApplication(sys.argv)
+    app.setWindowIcon(_app_icon())
     window = RaxLogicApp()
     window.showMaximized()
     sys.exit(app.exec())

@@ -11,6 +11,7 @@ from typing import List
 
 import pandas as pd
 
+from ..core.constants import RE_TRACK_CIRCUIT
 from .locking import _has_alnum, co_track_circuits
 
 _RE_POINT = re.compile(r'(?<!\d)(\d{1,4}(?:/\d{1,4})?)(?!\d)')
@@ -26,7 +27,7 @@ def _tc_names(val) -> List[str]:
     for tc in re.split(r'[,\s]+', str(val).upper()):
         tc = tc.strip()
         if tc.endswith('T'):
-            out += tc[:-1].split('/')
+            out += re.split(r'[/_]', tc[:-1])
     return out
 
 
@@ -69,6 +70,19 @@ def toc_data_checks(toc: pd.DataFrame) -> pd.DataFrame:
         if ov_pts and not _has_alnum(ov_tc.iat[k]):
             rows.append((route, 'Overlap points but no overlap track circuit (OV-TC)',
                          ', '.join(ov_pts)))
+
+    # Entries in the track-circuit columns that are not read as a track
+    # circuit are ignored by the locking, so list them.
+    for _, r in toc.iterrows():
+        bad = []
+        for col in ('RT-TC', 'OV-TC'):
+            for tok in re.split(r'[,\s]+', str(r[col])):
+                tok = tok.strip()
+                if _has_alnum(tok) and not RE_TRACK_CIRCUIT.match(tok):
+                    bad.append(f'{col}: {tok}')
+        if bad:
+            rows.append((str(r['FROM-TO']), 'Track-circuit entry not recognised (ignored by locking)',
+                         ', '.join(bad)))
 
     # Same signal, same destination and same overlap label but different
     # overlap points: the printed 3.47 / 5.16 headings cannot tell them apart.

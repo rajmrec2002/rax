@@ -124,9 +124,10 @@ RE_HOME_SIGNAL = re.compile(r'^(S\d+|CO\d+)$')
 # Numeric extraction from signal name
 RE_SIGNAL_NUM = re.compile(r'\d+')
 
-# Track circuit token pattern (e.g. 229T, 03AT, 240/250T, 238/241/252T, DMAT)
+# Track circuit token pattern (e.g. 229T, 03AT, 240/250T, 238/241/252T, DMAT,
+# and underscore-joined names such as 1_2T, 01_01AT used at UJN)
 RE_TRACK_CIRCUIT = re.compile(
-    r'^(?!AXT$)(?:[A-Z0-9]*\d[A-Z0-9]*(?:/[A-Z0-9]+)*|[A-Z]{2,})T$', re.IGNORECASE
+    r'^(?!AXT$)(?:[A-Z0-9]*\d[A-Z0-9]*(?:[/_][A-Z0-9]+)*|[A-Z]{2,})T$', re.IGNORECASE
 )
 
 # Characters stripped from point/TC field ends during IXL processing

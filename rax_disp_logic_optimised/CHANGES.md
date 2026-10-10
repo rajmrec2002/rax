@@ -3,7 +3,7 @@
 ## 2.0.1 – locking and dispensation fixes
 
 Tested on GRF (`GRF_TOC_Final_01.04.2026.xlsx` + `GRF_CH-Signal_Point.xlsx`,
-criss-cross 0–3000 m) and ADI. Regression tests: `make test` (35 tests).
+criss-cross 0–3000 m) and ADI. Regression tests: `make test` (37 tests).
 
 Check: the locking rules (point needed N by one route and R by the other,
 shared track circuit, same line) were re-derived independently from the raw
@@ -29,6 +29,7 @@ TOC and compared pair by pair with the square sheet.
 | Calling-on routes have a blank (or `_`) RT-TC | CO routes never locked through track circuits | A CO<n> route with no RT-TC uses the RT-TC of the S<n> route to the same signal and line (TCK column shows them; RT-TC is left as entered) |
 | Calling-on route lists overlap points but OV-TC is blank (GRF `CO3_JKCL1D`) | CO overlap never locked through track circuits | Such a CO route also takes the OV-TC of its S route (CO routes without overlap points do not) |
 | No signal-post rule: routes from S5, CO5, SH5 and A5 (same post) were locked only if they happened to share a track circuit, point or line (earlier ADI sheet had 35 such pairs not fully locked, e.g. `S5_10M1` / `CO5_10D`) | Same-post routes could be dispensed together if the TOC omitted the first track circuit | Routes whose starting signals share a post number (`post_key()`: S/CO/SH/A + number) always conflict |
+| Track circuits named with an underscore (UJN `1_2T`, `3_4T`, `01_01AT`, `10_10AT`) were not recognised | Routes sharing only such a track circuit were not locked | Pattern accepts `_` like `/`; any other unreadable entry (e.g. GRF `12T12`, ADI `471`, UJN `NLT2`) is listed in TOC-CHECK |
 | A formatted TOC saved by an earlier run carries its old NEW-LOCK / NEW-LCK2 / NEW-DSP2 / TCK / END / texts | Old results could leak into the new run | Generated columns are cleared when the TOC is read |
 
 ### Square sheet and dispensation (`processing/square_sheet.py`, `criss_cross.py`)
@@ -81,6 +82,9 @@ TOC and compared pair by pair with the square sheet.
   movement look permitted.
 * `processing/pipeline.py` (`run_dispensation`) holds the whole "Run Fn"
   sequence; the GUI calls it, so batch runs and the GUI give identical output.
+
+* **App icon:** Indian Railways logo as window/taskbar icon and in the banner
+  (`gui/assets/app_icon.png`, `.ico` for packaging).
 
 ### Not changed
 

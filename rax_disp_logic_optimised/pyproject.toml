@@ -37,6 +37,9 @@ all = [
 [project.scripts]
 rax-logic = "rax_disp_logic_optimised.cli.main:main"
 
+[tool.setuptools.package-data]
+"*" = ["gui/assets/*.png", "gui/assets/*.ico"]
+
 [tool.ruff]
 target-version = "py39"
 line-length = 100

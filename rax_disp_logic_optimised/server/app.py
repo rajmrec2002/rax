@@ -115,12 +115,14 @@ def create_app(cfg: Optional[ServerConfig] = None) -> FastAPI:
         cc_min: float = Form(0), cc_max: float = Form(0),
         extra_chainage: str = Form(''),
         iso_preferred: bool = Form(True),
+        iso_distance: str = Form('120'),
     ):
         from ..processing.pipeline import parse_bands, parse_chainage_text
         try:
             bands = parse_bands(cc_bands) if cc_bands.strip() else (
                 [(cc_min, cc_max)] if criss_cross else [])
             extra = parse_chainage_text(extra_chainage)
+            iso_dist = float(iso_distance) if iso_distance.strip() else None
         except ValueError as e:
             raise HTTPException(422, str(e))
         if criss_cross:
@@ -139,6 +141,7 @@ def create_app(cfg: Optional[ServerConfig] = None) -> FastAPI:
             'bands': [[lo, None if hi == float('inf') else hi] for lo, hi in bands],
             'extra_chainage': extra,
             'iso_preferred': iso_preferred,
+            'iso_distance': iso_dist,
         }
         job_id = await run_in_threadpool(jobs().create, params, files)
         return _get(job_id)

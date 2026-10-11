@@ -380,6 +380,18 @@ class RaxLogicApp(QMainWindow):
             '(COND-ISO column, e.g. #121N# with S12_12 set). See the ISO output file.')
         g.addWidget(self.cb_iso, 10, 2, 1, 2)
 
+        g.addWidget(self._num_lbl('14'), 11, 0)
+        g.addWidget(self._desc_lbl('Isolation: min. criss-cross distance from next stop signal (m)'),
+                    11, 1)
+        self.e_iso_dist = QLineEdit('120')
+        self.e_iso_dist.setToolTip(
+            'A movement without overlap (calling-on, shunt) is taken to overshoot its next stop\n'
+            'signal along the movements possible from that signal post, and onwards.\n'
+            'A meeting with another movement\'s route needs isolation only if the criss-cross\n'
+            'point is within this distance of the next stop signal (uses the chainage file,\n'
+            'field 03; without chainage every meeting counts). Blank = no limit.')
+        g.addWidget(self.e_iso_dist, 11, 2, 1, 2)
+
     def _populate_criss_card(self, g: QGridLayout):
         g.addWidget(self._num_lbl('10'), 0, 0)
         g.addWidget(self._desc_lbl('Minimum distance'), 0, 1)
@@ -519,6 +531,7 @@ class RaxLogicApp(QMainWindow):
         self.cb_vvm.setCurrentText('NO')
         self.cb_cc.setCurrentText('NO')
         self.cb_iso.setCurrentText('YES')
+        self.e_iso_dist.setText('120')
         self.e_cc_min.setText('0')
         self.e_cc_max.setText('0')
         self.e_cc_bands.clear()
@@ -542,6 +555,7 @@ class RaxLogicApp(QMainWindow):
             'VV_SQSH': self.cb_vvm.currentText(),
             'CRISS_CROSS': self.cb_cc.currentText(),
             'ISO_PREFERRED': self.cb_iso.currentText(),
+            'ISO_DISTANCE': self.e_iso_dist.text().strip(),
             'CC_MIN': self.e_cc_min.text(), 'CC_MAX': self.e_cc_max.text(),
             'CC_BANDS': self.e_cc_bands.text(),
             'SERVER_URL': self.e_server.text().strip(),
@@ -585,6 +599,7 @@ class RaxLogicApp(QMainWindow):
             self.cb_vvm.setCurrentText(cfg.get('VV_SQSH', 'NO'))
             self.cb_cc.setCurrentText(cfg.get('CRISS_CROSS', 'NO'))
             self.cb_iso.setCurrentText(cfg.get('ISO_PREFERRED', 'YES') or 'YES')
+            self.e_iso_dist.setText(cfg.get('ISO_DISTANCE', '120'))
             self.e_cc_min.setText(cfg.get('CC_MIN', '0'))
             self.e_cc_max.setText(cfg.get('CC_MAX', '0'))
             self.e_cc_bands.setText(cfg.get('CC_BANDS', ''))
@@ -762,15 +777,23 @@ class RaxLogicApp(QMainWindow):
             if extra is None:
                 return
 
+        try:
+            t = self.e_iso_dist.text().strip()
+            iso_dist = float(t) if t else None
+        except ValueError:
+            QMessageBox.critical(self, 'Isolation Distance',
+                                 'Field 14 must be a distance in metres (or blank).')
+            return
         hs, end = self._home_signal_texts()
         params = {
             'toc_path': self.fp1, 'save_dir': self.save_dir, 'stn': self.e_stn.text(),
             'hs': hs, 'end': end, 'l_no': int(self.cb_lno.currentText()),
             'vv_file': self.fpvv if vv else '',
-            'criss_cross': criss, 'chainage_path': self.fp_ch if criss else '',
+            'criss_cross': criss, 'chainage_path': self.fp_ch,
             'bands': [[lo, None if hi == float('inf') else hi] for lo, hi in (bands or [])],
             'extra_chainage': extra,
             'iso_preferred': self.cb_iso.currentText().upper() == 'YES',
+            'iso_distance': iso_dist,
         }
         self._set_busy(True)
         self.pb.setValue(0)
@@ -829,7 +852,8 @@ class RaxLogicApp(QMainWindow):
                            params['l_no'], criss_cross=params['criss_cross'],
                            chainage=params['chainage_path'], vv=params['vv_file'],
                            bands=band_txt, extra_chainage=params['extra_chainage'],
-                           iso_preferred=params['iso_preferred'])
+                           iso_preferred=params['iso_preferred'],
+                           iso_distance=params['iso_distance'])
             job_id = job['id']
             st = job
             while st.get('state') not in STATES_FINAL:

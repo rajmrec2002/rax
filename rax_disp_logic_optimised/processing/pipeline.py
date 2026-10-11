@@ -202,6 +202,7 @@ def run_dispensation(
     bands: Optional[Sequence[Band]] = None,
     extra_chainage: Optional[Dict[str, float]] = None,
     iso_preferred: bool = True,
+    iso_distance: Optional[float] = 120.0,
     progress: Optional[Callable[[float], None]] = None,
     t_str: Optional[str] = None,
 ) -> RunResult:
@@ -222,6 +223,9 @@ def run_dispensation(
     processing/isolation.py).  Isolated pairs are left out of the 3.47 /
     5.16 dispensation; points no other movement needs the other way are
     added to ISO, the rest become conditional isolation (COND-ISO column).
+    `iso_distance`: required minimum criss-cross distance (m) from the next
+    stop signal to the point where an overshoot meets another route
+    (measured with the chainage file; None = no limit).
     Results: STN_<stn>ISO-gen file.
     """
     prog = progress or (lambda _p: None)
@@ -267,7 +271,8 @@ def run_dispensation(
     isolated = set()
     if iso_preferred:
         base = ixl_fn(toc, hs, end, l_no) if vv_file else ltoc
-        iso = find_isolation(base, vvlsqsh)
+        iso = find_isolation(base, vvlsqsh, chainage_path=chainage_path,
+                             distance=iso_distance)
         if not vv_file and (iso.toc['ISO-ADDED'] != '').any():
             # lock the added isolation points like any other ISO entry
             before = _conflicts(vvlsqsh)

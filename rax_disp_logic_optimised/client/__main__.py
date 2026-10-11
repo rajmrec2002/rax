@@ -64,6 +64,8 @@ def cmd_run(c: RaxClient, a) -> int:
         a.bands = a.bands or s.get('CC_BANDS', '')
         if a.iso is None:
             a.iso = (s.get('ISO_PREFERRED') or 'YES').upper()
+        if a.iso_distance is None and s.get('ISO_DISTANCE', '') != '':
+            a.iso_distance = s['ISO_DISTANCE']
         a.cc_min = a.cc_min if a.cc_min is not None else float(s.get('CC_MIN') or 0)
         a.cc_max = a.cc_max if a.cc_max is not None else float(s.get('CC_MAX') or 0)
         if s.get('VV_SQSH', '').upper() == 'YES':
@@ -80,7 +82,9 @@ def cmd_run(c: RaxClient, a) -> int:
                    chainage=a.chainage or '', vv=a.vv or '', bands=a.bands or '',
                    cc_min=a.cc_min or 0, cc_max=a.cc_max or 0,
                    extra_chainage=_extra(a.add_chainage),
-                   iso_preferred=(a.iso or 'YES').upper() != 'NO')
+                   iso_preferred=(a.iso or 'YES').upper() != 'NO',
+                   iso_distance=(120.0 if a.iso_distance is None else
+                                 float(a.iso_distance) if str(a.iso_distance).strip() else None))
     print(f'Job {job["id"]} submitted to {c.base}')
     if a.no_wait:
         return 0
@@ -135,6 +139,9 @@ def main(argv=None) -> int:
                    help='chainage missing from the file, e.g. S12=1234.5; repeatable')
     p.add_argument('--iso', choices=['YES', 'NO', 'yes', 'no'], default=None,
                    help='isolation preferred over dispensation (default YES)')
+    p.add_argument('--iso-distance', default=None, metavar='METRES',
+                   help='isolation: min. criss-cross distance from the next stop signal '
+                        '(default 120; "" = no limit)')
     p.add_argument('--out', help='folder for the outputs')
     p.add_argument('--no-wait', action='store_true', help='submit and return the job id')
 

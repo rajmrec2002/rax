@@ -9,17 +9,28 @@
   criss-cross movements.
   * A movement with an overlap stays within it (the overlap is its
     overshoot allowance, and its points are locked).
-  * A movement without an overlap (calling-on, shunt) runs on past its
-    last signal over unlocked points: facing points send it the way they
-    lie, trailing points let it through to the toe. It crosses at most
-    one plain line track circuit and 6 track circuits in all (the TOC has
-    no lengths).
+  * A movement without an overlap (calling-on, shunt) overshoots its next
+    stop signal along the movements that can start from that signal's post
+    (CO21 → S31: all routes of S31 / SH31 / CO31 / A31), then from the post
+    at the end of each of those, and so on to the last stop signal. Those
+    routes are not set, so their points are free.
+  * The only limit is distance. A meeting counts if the criss-cross point
+    (the point where the overshoot path enters the other route) is within
+    option **14 "Isolation: min. criss-cross distance from next stop
+    signal (m)"** of the next stop signal (default 120; blank = no limit).
+    The distance is measured with the chainage file (field 03). Without
+    chainage, only the movements from the next post are followed and every
+    meeting on them counts.
+  * An isolation point must be facing on the overshoot path, outside both
+    movements' routes and overlaps. Its other leg must not lead onto the
+    same route within 6 track circuits.
   * Isolation is needed where that overshoot reaches the other
     movement's **route**. Reaching only the other's overlap would need both
     trains to overshoot, and is ignored.
-  * GRF example: CO21_01D overshooting S31 runs 01BT-139T-(139/140 R)-
-    140T-141T-146T into S33→S45's route, so 139/140N goes into the ISO of
-    S33_39. S17_04M / CO21_01D needs no isolation (double overshoot).
+  * GRF example: CO21_01D overshooting S31 along S31_WCSL1 / S31_39 runs
+    01BT-139T-(139/140 R)-140T-141T-146T into S33→S45's route at point 146,
+    401.89 m from S31. Within the set distance, 139/140N goes into the ISO
+    of S33_39. S17_04M / CO21_01D needs no isolation (double overshoot).
 * The isolation point is a facing point outside both routes and overlaps,
   locked the other way. Where several cut every path, the one that locks
   the fewest other movements is chosen, Normal first:

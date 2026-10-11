@@ -18,6 +18,7 @@ Job parameters (all JSON-serialisable):
     bands                              '0-120, 120-300, 300+'  or [[lo, hi], ...]
     extra_chainage                     {'S12': 1234.5, ...}
     iso_preferred                      bool (default True)
+    iso_distance                       metres (default 120; '' = no limit)
     t_str                              optional time stamp for file names
 """
 
@@ -96,6 +97,8 @@ def run_job(params: Dict[str, Any], status_path: str) -> Dict[str, Any]:
             bands=_bands(params.get('bands')),
             extra_chainage=params.get('extra_chainage') or None,
             iso_preferred=bool(params.get('iso_preferred', True)),
+            iso_distance=(None if params.get('iso_distance') in (None, '')
+                          else float(params['iso_distance'])),
             progress=progress,
             t_str=params.get('t_str'),
         )

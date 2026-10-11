@@ -67,8 +67,11 @@ the install command.
 
 Only one train is assumed to overshoot at a time; double overshoot is ignored.
 A movement with an overlap stays within it. One without an overlap (calling-on,
-shunt) runs on past its signal over unlocked points: facing points send it the
-way they lie, trailing points let it through.
+shunt) overshoots its next stop signal along the movements possible from that
+signal's post (CO21 → S31: the S31/SH31 routes), and onwards from post to post.
+Facing points send it the way they lie, trailing points let it through. A
+meeting counts only if the criss-cross point is within option 14 (metres from
+the next stop signal, measured with the chainage file).
 
 Where that overshoot reaches another movement's **route**, the tool picks a
 facing point outside both routes and overlaps to lock the other way. It chooses

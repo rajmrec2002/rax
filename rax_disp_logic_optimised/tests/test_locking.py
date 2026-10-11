@@ -253,14 +253,21 @@ def test_post_to_post_movements_share_track_and_berthing():
         dict(FROM='S21', TO='S31', UN='01D', **{'RT-PT-N': '113/114N', 'RT-TC': '113T, 01AT, 01BT'}),
         dict(FROM='CO21', TO='S31', UN='01D', **{'RT-PT-N': '113/114N', 'RT-TC': ''}),
         dict(FROM='SH21', TO='SH31', UN='01D', **{'RT-PT-N': '113/114N', 'RT-TC': '113T'}),
-        # shunt with no S movement between its posts: berthing by line name
+        # shunt with no S movement between its posts: berthing of a movement
+        # ending at the same next post on the same line (last RT-TC entries
+        # without a point number)
         dict(FROM='SH40', TO='SH50', UN='05', **{'RT-PT-R': '131/132R', 'RT-TC': '131T'}),
-        dict(FROM='S7', TO='S9', UN='05', **{'RT-TC': '05AT, 05BT, 05CT'}),
+        dict(FROM='S8', TO='S50', UN='05', **{'RT-PT-N': '133/134N', 'RT-TC': '133T, 05T, 05AT'}),
+        # ... and with none at all: the line's T / AT / BT by name
+        dict(FROM='SH60', TO='SH70', UN='07', **{'RT-PT-R': '171/172R', 'RT-TC': '171T'}),
+        dict(FROM='S9', TO='S11', UN='07', **{'RT-PT-N': '175/176N', 'RT-TC': '07AT, 07BT, 07CT, 175T'}),
     ])
     tc = co_track_circuits(toc).tolist()
     assert tc[1] == '113T, 01AT, 01BT'
     assert tc[2] == '113T, 01AT, 01BT'
-    assert tc[3] == '131T, 05AT, 05BT'          # T / AT / BT only, not 05CT
+    assert tc[3] == '131T, 05T, 05AT'
+    assert tc[5] == '171T, 07AT, 07BT'          # T / AT / BT only, not 07CT
+    assert tc[4] == '133T, 05T, 05AT'           # S movement: unchanged
 
 
 def test_shunt_locks_against_movement_on_its_berthing():
@@ -270,3 +277,13 @@ def test_shunt_locks_against_movement_on_its_berthing():
         dict(FROM='SH38', TO='SH30', UN='01M', **{'RT-PT-R': '139/140R', 'RT-TC': '140T, 139T, 01BT'}),
     ])
     assert conflicts(vv, 'SH21_01D', 'SH38_01M')       # meet on berthing 01BT
+
+
+def test_shunt_ending_on_its_berthing_gets_nothing_added():
+    from rax_disp_logic_optimised.processing.locking import co_track_circuits
+    from helpers import make_toc
+    toc = make_toc([
+        dict(FROM='SH11', TO='S13', UN='3', **{'RT-TC': '3AT, 3BT'}),
+        dict(FROM='S38', TO='S22', UN='3', **{'RT-PT-N': '133/134N', 'RT-TC': '134T, 03AT, 03BT'}),
+    ])
+    assert co_track_circuits(toc).tolist()[0] == '3AT, 3BT'

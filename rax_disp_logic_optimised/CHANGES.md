@@ -35,16 +35,25 @@
   the next post on the same line use the same track circuits and points.
   The TOC gives no track circuits for CO and no berthing for SH, by
   convention, so:
-  * CO takes the track circuits of the S movement between the same posts.
-    This was matched by signal number before (CO21 → S21); it is now matched
-    by post;
-  * SH / A get the S movement's berthing track circuits;
-  * with no S movement between those posts, the line's berthing by name
-    (01T / 01AT / 01BT).
+  * CO takes the track circuits of the S movement between the same posts on
+    the same line. This was matched by signal number before (CO21 → S21); it
+    is now matched by post;
+  * an SH / A movement whose list does not end on its berthing gets it. The
+    berthing is the last track circuits of RT-TC that carry no point number,
+    usually a pair such as 01AT, 01BT or 05T, 05AT. It comes from:
+    1. the S movement between the same posts; else
+    2. a movement ending at the same next post on the same line; else
+    3. any movement on the same line; else
+    4. the line's track circuits by name (01T / 01AT / 01BT, never one with
+       a point number).
 
-  Effect: GRF 6,009 → 6,030 conflicting pairs (+21) and ADI 45,772 →
-  46,010 (+238). All the additions are shunt movements now locked through
-  their berthing, e.g. CO3_DMABM1 / SH15_3; nothing was unlocked.
+  Effect: GRF unchanged (6,009 conflicting pairs); ADI 45,772 → 45,841
+  (+69). The ADI additions are shunt movements now locked through their
+  berthing, e.g. SH104_18D with 18T. Nothing was unlocked.
+
+  An earlier draft of this rule matched berthing by name alone and took
+  GRF 3AT/3BT (the approach of signal S3) as line 3's berthing; that is
+  fixed.
 * **Basic principles applied** (isolation):
   * a point track circuit carries the point number, at least 3 digits
     (121T; crossover 101/102 → 101T and 102T, or 101/102T); line track

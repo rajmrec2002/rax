@@ -61,6 +61,16 @@ def _tc_list(val) -> List[str]:
             and _has_alnum(t)]
 
 
+def _berthing_of(tcs: List[str]) -> List[str]:
+    """Berthing = the last track circuits of a route with no point number ('01AT, 01BT')."""
+    out: List[str] = []
+    for t in reversed(tcs):
+        if re.search(r'\d{3,}', t):
+            break
+        out.insert(0, t)
+    return out
+
+
 def co_track_circuits(toc: pd.DataFrame, col: str = 'RT-TC', need=None) -> pd.Series:
     """
     Track-circuit column `col` with the post-to-post rule applied.
@@ -74,9 +84,13 @@ def co_track_circuits(toc: pd.DataFrame, col: str = 'RT-TC', need=None) -> pd.Se
       of the S movement between the same posts on the same line (else the
       first S movement between those posts);
     * for RT-TC, an SH or A movement keeps its own track circuits and gets
-      those of that S movement it lacks (the berthing); if there is no such
-      S movement, the line's berthing track circuits by name (line 01:
-      01T / 01AT / 01BT, whichever the TOC has).
+      those of that S movement it lacks (the berthing).  If there is no such
+      S movement, it gets the berthing of a movement ending at the same next
+      post on the same line: the last track circuits of its RT-TC that carry
+      no point number (usually a pair such as 01AT, 01BT or 05T, 05AT);
+      failing that, the berthing of any movement on the same line; and
+      only then the line's track circuits by name (01T / 01AT / 01BT,
+      never one with a point number).
 
     `need`, if given, is a boolean list: only CO rows marked True are
     filled (used for OV-TC: only CO rows that list overlap points).
@@ -97,16 +111,24 @@ def co_track_circuits(toc: pd.DataFrame, col: str = 'RT-TC', need=None) -> pd.Se
             by_posts.setdefault((a, b), tc)
 
     all_tcs: List[str] = []
+    berth_line: Dict[tuple, List[str]] = {}       # (next post, line) -> berthing
+    berth_any: Dict[str, List[str]] = {}          # line -> berthing
     if col == 'RT-TC':
         for tc in tcs:
             all_tcs += [t for t in _tc_list(tc) if t not in all_tcs]
+        for f, b, u, tc in zip(frm, pt, unk, tcs):
+            if b and not f.startswith('SH'):
+                bt = _berthing_of(_tc_list(tc))
+                if bt:
+                    berth_line.setdefault((b, u), bt)
+                    berth_any.setdefault(u, bt)
 
     def berthing(u: str) -> List[str]:
         line = re.sub(r'^0+', '', str(u))
         if not line:
             return []
         pat = re.compile(r'^0*' + re.escape(line) + r'[AB]?T$')    # 01T, 01AT, 01BT
-        return [t for t in all_tcs if pat.match(t)]
+        return [t for t in all_tcs if pat.match(t) and not re.search(r'\d{3,}', t)]
 
     out = tcs.tolist()
     for k, (f, a, b, u, tc) in enumerate(zip(frm, pf, pt, unk, tcs)):
@@ -118,7 +140,11 @@ def co_track_circuits(toc: pd.DataFrame, col: str = 'RT-TC', need=None) -> pd.Se
             if ref:
                 full = ref if set(own) <= set(ref) else own + [t for t in ref if t not in own]
             else:
-                full = own + [t for t in berthing(u) if t not in own]
+                if _berthing_of(own):
+                    full = own                      # already ends on its berthing
+                else:
+                    bt = berth_line.get((b, u)) or berth_any.get(u) or berthing(u)
+                    full = own + [t for t in bt if t not in own]
             if full != own:
                 out[k] = ', '.join(full)
     return pd.Series(out, index=toc.index, dtype=str)

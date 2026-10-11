@@ -22,7 +22,10 @@ The script asks what to do and confirms before it starts:
 * **s**erver, **c**lient or **b**oth;
 * for a client, **d**esktop app or **c**ommand line only;
 * port (it checks the port is free, e.g. not your other dashboard on 8080),
-  jobs at a time, login token, server address, offline wheel folder.
+  jobs at a time, login accounts, server address and your login ID,
+  offline wheel folder;
+* **a** = manage login accounts (on a server: list, add, reset a password,
+  disable, enable, remove).
 
 It installs missing prerequisites (python3, python3-venv, the Qt libraries
 for the desktop app, git) after asking y/n. It shows a summary to confirm,
@@ -43,8 +46,34 @@ This creates the `rax` user and installs into `/opt/rax-logic/venv`. Settings go
 in `/etc/rax-logic/server.env`, jobs in `/var/lib/rax-logic/jobs`, and the
 service is `rax-logic` (`journalctl -u rax-logic -f`).
 
-When it finishes, the installer prints the web address and a **login token**.
-Clients need the token. Use `--no-token` only on a closed network.
+When it finishes, the installer creates the first login account (the
+administrator) and prints its **login ID and password**. Use `--no-login` only
+on a closed network.
+
+### Login accounts
+
+Every person gets their own login ID and password, made up by the server:
+
+```bash
+sudo bash deploy/install.sh user add --name "SSE/Sig ADI"      # prints Login ID + Password
+sudo bash deploy/install.sh user list
+sudo bash deploy/install.sh user reset rx04361                 # new password, logs them out
+sudo bash deploy/install.sh user disable rx04361               # or: enable / remove
+```
+
+* The password is shown **once**. Only a hash of it is kept
+  (`/var/lib/rax-logic/users.json`), so a lost password is reset, not looked
+  up.
+* `--admin` makes an administrator, who sees everybody's jobs. Other users see
+  only their own jobs.
+* A PC stays logged in for `RAX_SESSION_DAYS` (default 30). The PC keeps a
+  session key, never the password. Reset, disable or remove ends a user's
+  sessions at once, with no restart needed.
+* Five wrong passwords in a row lock that login ID for a minute.
+* Servers set up before 3.2.0 keep their old `RAX_TOKEN`. It still works, as a
+  server key with access to all jobs, for scripts. People should use login
+  IDs: make one per person, then remove `RAX_TOKEN` from
+  `/etc/rax-logic/server.env` and restart.
 
 * `RAX_WORKERS` is how many jobs run at once. Each criss-cross job uses every
   CPU core, so keep it small; extra jobs wait in a queue.
@@ -55,7 +84,7 @@ Clients need the token. Use `--no-token` only on a closed network.
 ## Client
 
 ```bash
-bash deploy/install.sh client --server http://10.0.0.5:8765 --token <token>
+bash deploy/install.sh client --server http://10.0.0.5:8765 --uid rx04361   # asks for the password
 ```
 
 This installs the desktop app (applications menu → *Rax Logic*, or `rax-logic`)
@@ -64,11 +93,15 @@ Use `--cli-only` for just `rax-client`, which needs nothing beyond Python.
 
 In the desktop app:
 * Fill in **Run on server** to run jobs on the server. Outputs are downloaded
-  into the output folder (field 02).
+  into the output folder (field 02). The first time, the app asks for your
+  login ID and password; **Login** next to the field logs in again.
+* The web page has the login at the top right.
 * Leave it blank to run on this PC. The run happens in a separate process,
   so the window stays responsive. **Stop** cancels a run.
 
 ```bash
+rax-client login --server http://10.0.0.5:8765 --uid rx04361      # asks for the password
+rax-client whoami | logout
 rax-client run --settings ~/.rax-logic/ADI_20261011_101500.txt   # file saved by "Save Settings"
 rax-client run --toc ADI_TOC.xlsx --stn ADI --hs "S5,CO5=VIRAR" --hs "S6,S8=SBI" \
                --lines 18 --criss-cross --chainage ADI_CH.xlsx --bands "0-120,120-300,300+"
@@ -78,7 +111,7 @@ rax-client jobs | status ID | download ID --out DIR | cancel ID
 ```
 
 **Update** to the latest version. This pulls the code, reinstalls and restarts
-the service; settings, token, port and jobs are kept:
+the service; settings, login accounts, port and jobs are kept:
 
 ```bash
 cd rax

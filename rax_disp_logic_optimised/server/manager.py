@@ -59,10 +59,11 @@ class JobManager:
         return os.path.join(self.job_dir(job_id), 'status.json')
 
     # ── create / read ────────────────────────────────────────────────────
-    def create(self, params: Dict[str, Any], files: Dict[str, tuple]) -> str:
+    def create(self, params: Dict[str, Any], files: Dict[str, tuple], user: str = '') -> str:
         """
         files: {'toc': (filename, bytes), 'chainage': (...), 'vv': (...)}
         params: job parameters without paths (see service.jobs).
+        user: login ID of the owner ('' = no login on this server).
         """
         job_id = uuid.uuid4().hex[:12]
         d = os.path.join(self.cfg.jobs_dir, job_id)
@@ -85,8 +86,9 @@ class JobManager:
         write_status(os.path.join(d, 'status.json'), id=job_id, state='queued', progress=0,
                      created=time.time(), stn=params['stn'],
                      criss_cross=bool(params.get('criss_cross')),
-                     iso_preferred=bool(params.get('iso_preferred', True)), error='')
-        logger.info('Job %s queued (%s)', job_id, params['stn'])
+                     iso_preferred=bool(params.get('iso_preferred', True)), error='',
+                     user=user)
+        logger.info('Job %s queued (%s%s)', job_id, params['stn'], f', {user}' if user else '')
         return job_id
 
     def params(self, job_id: str) -> Dict[str, Any]:
@@ -109,14 +111,17 @@ class JobManager:
             st['queue_position'] = self._queue().index(job_id) + 1 if job_id in self._queue() else 0
         return st
 
-    def list(self, limit: int = 100) -> List[Dict[str, Any]]:
+    def list(self, limit: int = 100, user: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Recent jobs; with `user`, only that user's jobs."""
         ids = [j for j in os.listdir(self.cfg.jobs_dir) if re.fullmatch(r'[0-9a-f]{12}', j)]
         rows = []
         for j in ids:
             try:
-                rows.append(self.status(j))
+                st = self.status(j)
             except Exception:
                 continue
+            if user is None or st.get('user', '') == user:
+                rows.append(st)
         rows.sort(key=lambda r: r.get('created', 0), reverse=True)
         return rows[:limit]
 

@@ -11,7 +11,7 @@ pytest.importorskip('fastapi')
 uvicorn = pytest.importorskip('uvicorn')
 
 from helpers import make_toc  # noqa: E402
-from rax_disp_logic_optimised.client.api import RaxClient, ServerError  # noqa: E402
+from rax_disp_logic_optimised.client.api import LoginRequired, RaxClient, ServerError  # noqa: E402
 from rax_disp_logic_optimised.server.app import create_app  # noqa: E402
 from rax_disp_logic_optimised.server.config import ServerConfig  # noqa: E402
 
@@ -60,7 +60,8 @@ def files(tmp_path):
 def test_login_is_required(server):
     url, _ = server
     assert RaxClient(url, token='').health()['login_required'] is True
-    with pytest.raises(ServerError, match='401'):
+    # RAX_TOKEN still works as a server key; anything else must log in
+    with pytest.raises(LoginRequired, match='Not logged in'):
         RaxClient(url, token='wrong').jobs()
 
 

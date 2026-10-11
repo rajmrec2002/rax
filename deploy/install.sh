@@ -2,14 +2,21 @@
 # Rax Logic installer for Linux.
 #
 #   Server (needs root; runs as a systemd service):
-#     sudo bash deploy/install.sh server [--port 8765] [--workers 2] [--token TOKEN | --no-token]
+#     sudo bash deploy/install.sh server [--port 8765] [--workers 2] [--no-login]
 #                                     [--bind 0.0.0.0] [--wheelhouse DIR]
+#       creates the first login account (administrator) and shows its
+#       login ID and password; --no-login = anyone on the network may use it
+#
+#   Login accounts on the server (ID and password are made by the server):
+#     sudo bash deploy/install.sh user add --name "SSE/Sig ADI"   [--admin] [--uid ID]
+#     sudo bash deploy/install.sh user list | reset ID | disable ID | enable ID | remove ID
 #
 #   Client (normal user; no root):
-#     bash deploy/install.sh client [--cli-only] [--server http://host:8765] [--token TOKEN]
+#     bash deploy/install.sh client [--cli-only] [--server http://host:8765] [--uid ID]
 #                                [--wheelhouse DIR]
 #       default: desktop app (PySide6) + rax-client command
 #       --cli-only: rax-client command only (no pandas / PySide6)
+#       --uid: log in now (asks for the password); or later: rax-client login
 #
 #   Offline installs: on a PC with internet run
 #     bash deploy/install.sh bundle DIR        (downloads all wheels into DIR)
@@ -82,6 +89,11 @@ update_server() {
   fi
   echo "  Server version: $("$PREFIX/venv/bin/rax-server" --version)"
   echo "  Settings kept: $ETC/server.env    Jobs kept: $DATA/jobs"
+  if ! has_users; then
+    echo "  No login accounts yet. Make the first one (the server shows its ID and password):"
+    echo "    sudo bash $0 user add --admin --name Administrator"
+    echo "  then one per person; clients log in with:  rax-client login --uid <ID>"
+  fi
 }
 
 update_client() {
@@ -145,14 +157,14 @@ free_port() {      # first free port from 8765 up
 
 # ── server ───────────────────────────────────────────────────────────────────
 install_server() {
-  local port="" workers=2 bind=0.0.0.0 token="" no_token=0
+  local port="" workers=2 bind=0.0.0.0 token="" no_login=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --port) port="$2"; shift 2 ;;
       --workers) workers="$2"; shift 2 ;;
       --bind) bind="$2"; shift 2 ;;
-      --token) token="$2"; shift 2 ;;
-      --no-token) no_token=1; shift ;;
+      --token) token="$2"; shift 2 ;;          # optional server key for scripts
+      --no-login|--no-token) no_login=1; shift ;;
       --wheelhouse) WHEELHOUSE="$(realpath "$2")"; shift 2 ;;
       *) die "unknown option $1" ;;
     esac
@@ -192,9 +204,6 @@ install_server() {
       echo "RAX_PORT=$port" >> "$ETC/server.env"
     fi
   else
-    if [[ $no_token -eq 0 && -z "$token" ]]; then
-      token="$("$PY" -c 'import secrets; print(secrets.token_urlsafe(24))')"
-    fi
     say "Writing $ETC/server.env"
     cat > "$ETC/server.env" <<CONF
 # Rax Logic server settings (restart after changes: sudo systemctl restart rax-logic)
@@ -203,8 +212,11 @@ RAX_PORT=$port
 RAX_DATA_DIR=$DATA
 # Jobs that may run at the same time (criss-cross uses all CPU cores per job)
 RAX_WORKERS=$workers
-# Login token clients must send; blank = no login (only on a trusted network)
+# People log in with accounts made by: sudo bash deploy/install.sh user add
+# Optional server key for scripts (sees all jobs); blank = none
 RAX_TOKEN=$token
+# Days a login stays valid on a PC
+RAX_SESSION_DAYS=30
 RAX_MAX_UPLOAD_MB=50
 # Delete finished jobs after this many days (0 = keep)
 RAX_KEEP_DAYS=30
@@ -228,17 +240,43 @@ CONF
   else
     echo "Service did not start; see: journalctl -u rax-logic -n 50" >&2
   fi
+  if [[ $no_login -eq 0 ]] && ! has_users; then
+    say "Creating the first login account (administrator)"
+    user_cmd add --admin --name "Administrator"
+  fi
+  local login="user accounts:  sudo bash $0 user list"
+  has_users || login="${RAX_TOKEN:+server key only (RAX_TOKEN)}"
   cat <<MSG
 
   Web page:  http://${ip:-<server-ip>}:${RAX_PORT}/
-  Login token: ${RAX_TOKEN:-<none – anyone on the network can use it>}
+  Login:     ${login:-<none – anyone on the network can use it>}
   Settings:  $ETC/server.env      Jobs: $DATA/jobs
   Logs:      journalctl -u rax-logic -f
   Firewall:  open TCP ${RAX_PORT} if needed (e.g. sudo ufw allow ${RAX_PORT}/tcp)
 
+  For each person who will use it, make a login ID and password:
+    sudo bash $0 user add --name "SSE/Sig ADI"
   On each client PC:
-    bash deploy/install.sh client --server http://${ip:-<server-ip>}:${RAX_PORT} --token '${RAX_TOKEN}'
+    bash deploy/install.sh client --server http://${ip:-<server-ip>}:${RAX_PORT} --uid <login ID>
 MSG
+}
+
+server_data() {    # the server's data folder
+  local d=""
+  [[ -f "$ETC/server.env" ]] && d="$(sed -n 's/^RAX_DATA_DIR=//p' "$ETC/server.env" | tail -1)"
+  echo "${d:-$DATA}"
+}
+
+has_users() {      # 0 if the server has login accounts
+  local f; f="$(server_data)/users.json"
+  [[ -s "$f" ]] && "$PY" -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])) else 1)' "$f" 2>/dev/null
+}
+
+user_cmd() {       # manage login accounts, as the service user, in the server's data folder
+  [[ $EUID -eq 0 ]] || die "needs root: sudo bash $0 user ${*:-list}"
+  [[ -x "$PREFIX/venv/bin/rax-server" ]] || die "the server is not installed here"
+  [[ $# -gt 0 ]] || set -- list
+  runuser -u rax -- "$PREFIX/venv/bin/rax-server" user --data-dir "$(server_data)" "$@"
 }
 
 uninstall_server() {
@@ -256,12 +294,13 @@ uninstall_server() {
 
 # ── client ───────────────────────────────────────────────────────────────────
 install_client() {
-  local cli_only=0 server="" token=""
+  local cli_only=0 server="" token="" uid=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --cli-only) cli_only=1; shift ;;
       --server) server="$2"; shift 2 ;;
-      --token) token="$2"; shift 2 ;;
+      --uid) uid="$2"; shift 2 ;;
+      --token) token="$2"; shift 2 ;;          # server key (scripts); people use --uid
       --wheelhouse) WHEELHOUSE="$(realpath "$2")"; shift 2 ;;
       *) die "unknown option $1" ;;
     esac
@@ -303,12 +342,21 @@ DESK
   if [[ -n "$server" ]]; then
     "$CLIENT_HOME/venv/bin/rax-client" config --server "$server" --token "$token" \
       || echo "Saved, but the server did not answer yet." >&2
+    if [[ -n "$uid" ]]; then
+      if [[ -t 0 || -n "${RAX_PASSWORD:-}" ]]; then
+        "$CLIENT_HOME/venv/bin/rax-client" login --server "$server" --uid "$uid" \
+          || echo "Login failed: try again later with:  rax-client login --uid $uid" >&2
+      else
+        echo "Log in later with:  rax-client login --uid $uid"
+      fi
+    fi
   fi
   case ":$PATH:" in *":$BIN:"*) ;; *) echo "Add $BIN to PATH:  echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.bashrc" ;; esac
   say "Client installed."
   [[ $cli_only -eq 0 ]] && echo "  Desktop app: 'Rax Logic' in the applications menu, or run: rax-logic"
   echo "  Command line: rax-client --help"
   [[ -n "$server" ]] && echo "  Server: $server (in the desktop app put it in 'Run on server', or leave blank to run locally)"
+  [[ -n "$server" && -z "$uid" ]] && echo "  Log in:  rax-client login --uid <login ID>   (the desktop app asks when you run)"
   return 0
 }
 
@@ -334,5 +382,6 @@ case "${1:-}" in
   uninstall-client) shift; uninstall_client ;;
   bundle) shift; bundle "$@" ;;
   update) shift; update "$@" ;;
-  *) sed -n '2,26p' "$0"; exit 1 ;;
+  user) shift; user_cmd "$@" ;;
+  *) sed -n '2,33p' "$0"; exit 1 ;;
 esac

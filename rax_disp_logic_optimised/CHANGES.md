@@ -1,5 +1,44 @@
 # Changes
 
+## 3.2.0 – login ID and password per user, made by the server
+
+* **Login accounts.** The administrator creates an account on the server
+  with `sudo bash deploy/install.sh user add --name "SSE/Sig ADI"` (or
+  `rax-server user add`). The server makes up the login ID (`rx` + 5 digits,
+  or `--uid` to choose one) and a random 12-character password
+  (`k7Pq-9mXt-3vRw`, no look-alike characters), and shows them once.
+  * Only a PBKDF2-SHA256 hash of the password is kept, in `users.json` in
+    the server's data folder.
+  * The account commands are `list`, `reset` (new password), `disable`,
+    `enable` and `remove`. Each takes effect at once; the server re-reads
+    the file.
+  * Five wrong passwords in a row lock a login ID for a minute.
+* **Sessions.** A client logs in with its ID and password and gets a session
+  key that is valid for `RAX_SESSION_DAYS` (default 30). The key is kept in
+  `~/.rax-logic/client.conf`, never the password. Reset, disable or remove
+  ends that user's sessions.
+* **Own jobs.** Each job records who submitted it. Users see, download,
+  cancel and delete only their own jobs; administrators (`--admin`) see all.
+* **Where you log in:**
+  * desktop app: a login dialog when "Run on server" needs it, plus a
+    **Login** button;
+  * web page: login ID and password at the top right, and Log out;
+  * command line: `rax-client login --uid ID` (asks for the password),
+    `whoami`, `logout`.
+* **Installer:**
+  * `install.sh server` creates the first (administrator) account and shows
+    it. `--no-login` replaces `--no-token`.
+  * `install.sh client --uid ID` logs in during the install.
+  * `install.sh user …` manages accounts.
+  * `setup.sh` asks for accounts when installing a server, and has a "manage
+    login accounts" menu. For a client it asks for your login ID.
+* **API:** `POST /api/login` (uid, password), `POST /api/logout` and
+  `GET /api/me` are new. Other calls need `Authorization: Bearer <session>`
+  once accounts exist.
+* **Old token:** `RAX_TOKEN` still works as a server key (all jobs) for
+  scripts, so servers set up with a token keep working after the update.
+
+
 ## 3.1.0 – shared berthing: overshoot runs back over opposite movements
 
 * **New principle.** The next stop signal (S30, UP) and the opposite signal

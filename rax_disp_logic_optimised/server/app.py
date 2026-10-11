@@ -11,9 +11,15 @@ FastAPI application: web page at /, REST API under /api.
     DELETE /api/jobs/{id}
     POST   /api/check-chainage              multipart: toc, chainage? -> missing names
     POST   /api/detect-home-signals         multipart: toc -> detected groups
+    POST   /api/login                       form: uid, password -> session token
+    POST   /api/logout
+    GET    /api/me                          who is logged in
 
-If a token is configured every /api call needs
-'Authorization: Bearer <token>' (or the X-API-Key header).
+Login: once the administrator has created user accounts (rax-server user
+add), every /api call except health and login needs
+'Authorization: Bearer <session token>' (or the X-API-Key header, or
+?token= on download links).  Users see only their own jobs.  RAX_TOKEN,
+if set, is a server key with access to all jobs (for scripts).
 """
 
 import logging
@@ -31,6 +37,7 @@ from fastapi.staticfiles import StaticFiles
 from .. import __version__
 from .config import ServerConfig
 from .manager import JobManager, safe_name
+from .users import UserError, UserStore
 
 logger = logging.getLogger(__name__)
 
@@ -41,12 +48,17 @@ _ASSETS = os.path.join(os.path.dirname(_HERE), 'gui', 'assets')
 def create_app(cfg: Optional[ServerConfig] = None) -> FastAPI:
     cfg = cfg or ServerConfig()
     state = {}
+    users = UserStore(cfg.data_dir)
+
+    def login_required() -> bool:
+        return bool(cfg.token) or users.has_users()
 
     @asynccontextmanager
     async def lifespan(_app):
         state['jobs'] = JobManager(cfg)
         logger.info('Rax Logic server %s: data in %s, %d worker(s), login %s',
-                    __version__, cfg.data_dir, cfg.workers, 'on' if cfg.token else 'off')
+                    __version__, cfg.data_dir, cfg.workers,
+                    'on' if login_required() else 'off')
         yield
         state['jobs'].shutdown()
 
@@ -57,17 +69,25 @@ def create_app(cfg: Optional[ServerConfig] = None) -> FastAPI:
     def jobs() -> JobManager:
         return state['jobs']
 
-    def auth(request: Request) -> None:
-        if not cfg.token:
-            return
+    def _given(request: Request) -> str:
         given = request.headers.get('x-api-key', '')
         h = request.headers.get('authorization', '')
         if h.lower().startswith('bearer '):
             given = h[7:].strip()
-        if not given:
-            given = request.query_params.get('token', '')   # for plain download links
-        if not secrets.compare_digest(given, cfg.token):
-            raise HTTPException(401, 'Login token missing or wrong')
+        return given or request.query_params.get('token', '')   # for plain download links
+
+    def auth(request: Request) -> dict:
+        """Who is calling: {'uid', 'name', 'admin'}.  Admin = all jobs."""
+        if not login_required():
+            return {'uid': '', 'name': '', 'admin': True}
+        given = _given(request)
+        if cfg.token and given and secrets.compare_digest(given, cfg.token):
+            return {'uid': '', 'name': 'server key', 'admin': True}
+        who = users.session(given)
+        if who is None:
+            raise HTTPException(401, 'Not logged in, or the session has ended: '
+                                     'log in with your login ID and password')
+        return who
 
     async def read_upload(f: Optional[UploadFile], what: str):
         if f is None or not f.filename:
@@ -79,28 +99,54 @@ def create_app(cfg: Optional[ServerConfig] = None) -> FastAPI:
             raise HTTPException(400, f'{what} file is empty')
         return (f.filename, data)
 
-    def _get(job_id: str):
+    def _get(job_id: str, who: dict):
         try:
-            return jobs().status(job_id)
+            st = jobs().status(job_id)
         except (KeyError, FileNotFoundError):
             raise HTTPException(404, 'No such job')
+        if not who['admin'] and st.get('user', '') != who['uid']:
+            raise HTTPException(404, 'No such job')     # another user's job
+        return st
 
     # ── web page ─────────────────────────────────────────────────────────
     @app.get('/', response_class=HTMLResponse, include_in_schema=False)
     def index():
         with open(os.path.join(_HERE, 'static', 'index.html'), encoding='utf-8') as f:
             return f.read().replace('{{VERSION}}', __version__) \
-                           .replace('{{LOGIN}}', 'true' if cfg.token else 'false')
+                           .replace('{{LOGIN}}', 'true' if login_required() else 'false')
 
     # ── API ──────────────────────────────────────────────────────────────
     @app.get('/api/health')
     def health():
         return {'app': 'rax-logic', 'version': __version__,
                 'running': jobs().running(), 'workers': cfg.workers,
-                'login_required': bool(cfg.token)}
+                'login_required': login_required()}
 
-    @app.post('/api/jobs', dependencies=[Depends(auth)], status_code=201)
+    @app.post('/api/login')
+    def login(uid: str = Form(...), password: str = Form(...)):
+        if not users.has_users():
+            raise HTTPException(400, 'This server has no user accounts '
+                                     '(the administrator creates them: rax-server user add)')
+        try:
+            s = users.login(uid, password)
+        except UserError as e:
+            code = 429 if 'Too many' in str(e) else 401
+            raise HTTPException(code, str(e))
+        logger.info('Login: %s', s['uid'])
+        return s
+
+    @app.post('/api/logout')
+    def logout(request: Request):
+        users.logout(_given(request))
+        return {'ok': True}
+
+    @app.get('/api/me')
+    def me(who: dict = Depends(auth)):
+        return who
+
+    @app.post('/api/jobs', status_code=201)
     async def submit(
+        who: dict = Depends(auth),
         toc: UploadFile = File(...),
         chainage: Optional[UploadFile] = File(None),
         vv: Optional[UploadFile] = File(None),
@@ -146,41 +192,41 @@ def create_app(cfg: Optional[ServerConfig] = None) -> FastAPI:
             'iso_distance': iso_dist,
             'iso_rear_end': iso_rear_end,
         }
-        job_id = await run_in_threadpool(jobs().create, params, files)
-        return _get(job_id)
+        job_id = await run_in_threadpool(jobs().create, params, files, who['uid'])
+        return _get(job_id, who)
 
-    @app.get('/api/jobs', dependencies=[Depends(auth)])
-    def list_jobs(limit: int = 100):
-        return jobs().list(limit)
+    @app.get('/api/jobs')
+    def list_jobs(limit: int = 100, who: dict = Depends(auth)):
+        return jobs().list(limit, None if who['admin'] else who['uid'])
 
-    @app.get('/api/jobs/{job_id}', dependencies=[Depends(auth)])
-    def job_status(job_id: str):
-        return _get(job_id)
+    @app.get('/api/jobs/{job_id}')
+    def job_status(job_id: str, who: dict = Depends(auth)):
+        return _get(job_id, who)
 
-    @app.get('/api/jobs/{job_id}/files/{name}', dependencies=[Depends(auth)])
-    def job_file(job_id: str, name: str):
-        _get(job_id)
+    @app.get('/api/jobs/{job_id}/files/{name}')
+    def job_file(job_id: str, name: str, who: dict = Depends(auth)):
+        _get(job_id, who)
         try:
             path = jobs().output_file(job_id, name)
         except KeyError:
             raise HTTPException(404, 'No such file')
         return FileResponse(path, filename=os.path.basename(path))
 
-    @app.get('/api/jobs/{job_id}/download', dependencies=[Depends(auth)])
-    def job_zip(job_id: str):
-        st = _get(job_id)
+    @app.get('/api/jobs/{job_id}/download')
+    def job_zip(job_id: str, who: dict = Depends(auth)):
+        st = _get(job_id, who)
         path = jobs().zip_outputs(job_id)
         return FileResponse(path, media_type='application/zip',
                             filename=f'{safe_name(st.get("stn", "STN"))}_{job_id}.zip')
 
-    @app.post('/api/jobs/{job_id}/cancel', dependencies=[Depends(auth)])
-    def job_cancel(job_id: str):
-        _get(job_id)
+    @app.post('/api/jobs/{job_id}/cancel')
+    def job_cancel(job_id: str, who: dict = Depends(auth)):
+        _get(job_id, who)
         return jobs().cancel(job_id)
 
-    @app.delete('/api/jobs/{job_id}', dependencies=[Depends(auth)], status_code=204)
-    def job_delete(job_id: str):
-        _get(job_id)
+    @app.delete('/api/jobs/{job_id}', status_code=204)
+    def job_delete(job_id: str, who: dict = Depends(auth)):
+        _get(job_id, who)
         jobs().delete(job_id)
 
     def _with_temp_files(files, fn):

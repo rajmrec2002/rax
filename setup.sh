@@ -151,10 +151,10 @@ client_installed() { [[ -x "${XDG_DATA_HOME:-$HOME/.local/share}/rax-logic/venv/
 flow_server() {
   command -v systemctl >/dev/null || die "systemd (systemctl) not found: the server needs it"
   check_prereqs 0
-  local port workers bind token_mode token="" fw=0 wh=""
+  local port workers bind login=u fw=0 wh=""
   if [[ -f /etc/rax-logic/server.env ]]; then
     port="$(sed -n 's/^RAX_PORT=//p' /etc/rax-logic/server.env | tail -1)"
-    say "A server is already set up (port ${port:-?}); its settings and token are kept."
+    say "A server is already set up (port ${port:-?}); its settings and accounts are kept."
   fi
   local suggest; suggest="$(free_port 8765)"
   while true; do
@@ -168,11 +168,9 @@ flow_server() {
   ask "Jobs that may run at the same time (criss-cross uses all CPU cores)" "2"; workers="$REPLY"
   choose "Who may connect?" "a=any PC on the network (0.0.0.0)" "l=only this computer (127.0.0.1)"
   [[ "$REPLY" == l ]] && bind=127.0.0.1 || bind=0.0.0.0
-  if [[ ! -f /etc/rax-logic/server.env ]]; then
-    choose "Login token for clients" "g=generate one (recommended)" "o=type my own" "n=no login (closed network only)"
-    token_mode="$REPLY"
-    if [[ "$token_mode" == o ]]; then ask "Token" ""; token="$REPLY"; [[ -n "$token" ]] || token_mode=g; fi
-  else token_mode=keep; fi
+  choose "Login for clients" "u=login ID + password for each person, made by the server (recommended)" \
+                            "n=no login (closed network only)"
+  login="$REPLY"
   if command -v ufw >/dev/null && ${SUDO:-} ufw status 2>/dev/null | grep -q "Status: active"; then
     yesno "Firewall (ufw) is on. Open port $port for clients?" y && fw=1
   fi
@@ -180,23 +178,50 @@ flow_server() {
     ask "Wheel folder (made with: bash deploy/install.sh bundle DIR)" "$SRC/wheels"; wh="$REPLY"
   fi
   local args=(server --port "$port" --workers "$workers" --bind "$bind")
-  case "$token_mode" in o) args+=(--token "$token") ;; n) args+=(--no-token) ;; esac
+  [[ "$login" == n ]] && args+=(--no-login)
   [[ -n "$wh" ]] && args+=(--wheelhouse "$wh")
   summary_ok "Install the SERVER (systemd service rax-logic, runs as user 'rax')" \
              "from: $SRC" "port: $port   listen on: $bind   parallel jobs: $workers" \
-             "login token: $([[ $token_mode == keep ]] && echo 'keep existing' || echo "$token_mode")" \
+             "login: $([[ $login == n ]] && echo 'none' || echo 'login ID + password per person (first: administrator)')" \
              "$([[ $fw == 1 ]] && echo "open firewall port $port")" \
              "$([[ -n "$wh" ]] && echo "offline wheels: $wh")" || exit 0
   run_install sudo "${args[@]}" || die "server installation failed (see above)"
   [[ $fw == 1 ]] && { need_root; $SUDO ufw allow "$port/tcp" && say "Firewall: port $port opened"; }
   local ip; ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  [[ "$login" == u ]] && add_users
   hr; say "Server ready: http://${ip:-<server-ip>}:$port/"
-  echo "   Token: sudo grep RAX_TOKEN /etc/rax-logic/server.env"
+  [[ "$login" == u ]] && echo "   Login accounts: bash setup.sh -> manage login accounts  (or: sudo bash deploy/install.sh user list)"
   echo "   Status: systemctl status rax-logic     Logs: journalctl -u rax-logic -f"
 }
 
+add_users() {      # make login accounts: the server makes up ID and password
+  while yesno "Make a login ID and password for a person now?" y; do
+    ask "Who is it for (name / post, e.g. SSE/Sig ADI)" ""; local name="$REPLY"
+    local adm=(); yesno "May this person see and manage everybody's jobs (administrator)?" n && adm=(--admin)
+    run_install sudo user add --name "$name" "${adm[@]}" || warn "could not create the account"
+    echo "   ${Y}Note the login ID and password above and give them to $name; the password is not shown again.${N}"
+  done
+}
+
+flow_users() {
+  server_installed || die "the server is not installed on this machine"
+  local what
+  while true; do
+    choose "Login accounts" "l=list" "a=add (server makes ID + password)" "r=reset a password" \
+                            "d=disable" "e=enable" "x=remove" "q=back"
+    case "$REPLY" in
+      l) run_install sudo user list ;;
+      a) add_users ;;
+      q) return ;;
+      *) case "$REPLY" in r) what=reset ;; d) what=disable ;; e) what=enable ;; x) what=remove ;; esac
+         ask "Login ID to $what" ""
+         [[ -n "$REPLY" ]] && run_install sudo user "$what" "$REPLY" ;;
+    esac
+  done
+}
+
 flow_client() {
-  local kind gui=1 url="" token="" wh=""
+  local kind gui=1 url="" uid="" wh=""
   choose "Which client?" "d=desktop app + command line (needs a screen)" "c=command line only (rax-client)"
   kind="$REPLY"; [[ "$kind" == c ]] && gui=0
   [[ $EUID -eq 0 ]] && warn "You are root: the client will be installed for root. Usually run this as your normal user."
@@ -206,14 +231,15 @@ flow_client() {
       ask "Server address, e.g. http://10.0.0.5:8765" ""; url="$REPLY"
       [[ -n "$url" ]] && break; warn "please type the address"
     done
-    ask "Login token (blank if the server has none)" ""; token="$REPLY"
+    ask "Your login ID from the server administrator (blank = log in later)" ""; uid="$REPLY"
   fi
   if yesno "Is this PC offline (install from a folder of downloaded wheels)?" n; then
     ask "Wheel folder" "$SRC/wheels"; wh="$REPLY"
   fi
   local args=(client)
   [[ $gui == 0 ]] && args+=(--cli-only)
-  [[ -n "$url" ]] && args+=(--server "$url" --token "$token")
+  [[ -n "$url" ]] && args+=(--server "$url")
+  [[ -n "$uid" ]] && args+=(--uid "$uid")
   [[ -n "$wh" ]] && args+=(--wheelhouse "$wh")
   summary_ok "Install the CLIENT for user $USER: $([[ $gui == 1 ]] && echo 'desktop app + rax-client' || echo 'rax-client only')" \
              "from: $SRC" "$([[ -n "$url" ]] && echo "server: $url" || echo 'no server (desktop app runs jobs on this PC)')" \
@@ -236,7 +262,7 @@ flow_update() {
   yesno "Get the latest code with git first?" y || pull=0
   local extra=(); [[ $pull == 0 ]] && extra+=(--no-pull)
   summary_ok "Update: $([[ $s == 1 ]] && echo 'server ')$([[ $c == 1 ]] && echo 'client')" \
-             "from: $SRC" "settings, token, port and jobs are kept" || exit 0
+             "from: $SRC" "settings, login accounts, port and jobs are kept" || exit 0
   [[ $s == 1 ]] && { run_install sudo update "${extra[@]}" || die "server update failed"; extra=(--no-pull); }
   [[ $c == 1 ]] && { run_install update "${extra[@]}" || die "client update failed"; }
 }
@@ -247,7 +273,7 @@ flow_remove() {
   [[ $s == 0 && $c == 0 ]] && die "nothing installed here"
   if [[ $s == 1 ]] && yesno "Remove the SERVER?" n; then
     local purge=()
-    yesno "Also delete all jobs, outputs and server settings (token)?" n && purge=(--purge)
+    yesno "Also delete all jobs, outputs, login accounts and server settings?" n && purge=(--purge)
     summary_ok "Remove the server ${purge[*]:+and delete jobs + settings}" || exit 0
     run_install sudo uninstall-server "${purge[@]}"
   fi
@@ -267,8 +293,12 @@ say "Source: $SRC (version ${ver:-?})"
 server_installed && say "Server installed: $(/opt/rax-logic/venv/bin/rax-server --version 2>/dev/null || echo yes)"
 client_installed && say "Client installed for $USER"
 
-choose "What do you want to do?" "i=install" "u=update what is installed" "r=remove" "q=quit"
+opts=("i=install" "u=update what is installed")
+server_installed && opts+=("a=manage login accounts (server)")
+opts+=("r=remove" "q=quit")
+choose "What do you want to do?" "${opts[@]}"
 case "$REPLY" in
+  a) flow_users ;;
   i) choose "Install what?" "s=server (this Linux machine runs jobs for others, web page)" \
                             "c=client (desktop app / command line on this PC)" \
                             "b=both server and client on this machine"

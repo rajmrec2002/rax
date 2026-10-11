@@ -59,6 +59,10 @@
     .grid { grid-template-columns: 28px 1fr; }
     .grid > :nth-child(3n) { grid-column: 1 / -1; }
     header p { display: none; }
+    header { flex-wrap: wrap; }
+    #login { flex-basis: 100%; }
+    #loginform { width: 100%; }
+    #loginform input { flex: 1 1 0; min-width: 0; width: 0 !important; }
   }
 </style>
 </head>
@@ -70,7 +74,14 @@
     <p>Locking square sheet, criss-cross and 3.47 / 5.16 dispensation – server v{{VERSION}}</p>
   </div>
   <div id="login" style="display:none">
-    <input type="password" id="token" placeholder="Login token" style="width:160px">
+    <form id="loginform" autocomplete="on" style="display:flex;gap:6px;align-items:center">
+      <input type="text" id="uid" name="username" placeholder="Login ID" autocomplete="username" style="width:110px">
+      <input type="password" id="pw" name="password" placeholder="Password" autocomplete="current-password" style="width:130px">
+      <button type="submit">Log in</button>
+    </form>
+    <div id="whobox" style="display:none;gap:8px;align-items:center">
+      <span id="who"></span><button type="button" id="logoutbtn">Log out</button>
+    </div>
   </div>
 </header>
 <main>
@@ -158,19 +169,56 @@
 <script>
 const LOGIN = {{LOGIN}};
 const $ = id => document.getElementById(id);
-const tokenBox = $('token');
-if (LOGIN) {
-  $('login').style.display = '';
-  try { tokenBox.value = localStorage.getItem('raxToken') || ''; } catch (e) {}
-  tokenBox.addEventListener('change', () => { try { localStorage.setItem('raxToken', tokenBox.value); } catch (e) {} refresh(); });
+// login: ID and password made by the server administrator; the browser keeps
+// only the session token
+let session = '';
+try { session = localStorage.getItem('raxSession') || ''; } catch (e) {}
+function setSession(tok, who) {
+  session = tok || '';
+  try { tok ? localStorage.setItem('raxSession', tok) : localStorage.removeItem('raxSession'); } catch (e) {}
+  showLogin(who);
 }
-const hdrs = () => LOGIN ? { 'Authorization': 'Bearer ' + tokenBox.value } : {};
-const q = () => LOGIN ? '?token=' + encodeURIComponent(tokenBox.value) : '';
+function showLogin(who) {
+  if (!LOGIN) return;
+  $('login').style.display = '';
+  $('loginform').style.display = session ? 'none' : 'flex';
+  $('whobox').style.display = session ? 'flex' : 'none';
+  if (who) $('who').textContent = who;
+}
+const hdrs = () => LOGIN && session ? { 'Authorization': 'Bearer ' + session } : {};
+const q = () => LOGIN && session ? '?token=' + encodeURIComponent(session) : '';
+if (LOGIN) {
+  try { $('uid').value = localStorage.getItem('raxUid') || ''; } catch (e) {}
+  showLogin();
+  $('loginform').onsubmit = async ev => {
+    ev.preventDefault();
+    const fd = new FormData(); fd.append('uid', $('uid').value.trim()); fd.append('password', $('pw').value);
+    try {
+      const r = await fetch('/api/login', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(typeof j.detail === 'string' ? j.detail : 'Login failed');
+      $('pw').value = '';
+      try { localStorage.setItem('raxUid', j.uid); } catch (e) {}
+      setSession(j.token, j.uid + (j.name ? ' (' + j.name + ')' : ''));
+      show($('msg'), 'ok', 'Logged in as ' + j.uid + '.');
+      refresh();
+    } catch (e) { show($('msg'), 'err', e.message); }
+  };
+  $('logoutbtn').onclick = async () => {
+    try { await fetch('/api/logout', { method: 'POST', headers: hdrs() }); } catch (e) {}
+    setSession('', ''); refresh();
+  };
+  if (session) fetch('/api/me', { headers: hdrs() }).then(r => r.ok ? r.json() : null)
+    .then(w => w ? showLogin(w.uid ? w.uid + (w.name ? ' (' + w.name + ')' : '') : w.name) : setSession('', ''))
+    .catch(() => {});
+}
 
 function show(el, kind, text) { el.className = 'msg ' + kind; el.textContent = text; }
 async function api(path, opts = {}) {
   opts.headers = Object.assign({}, opts.headers || {}, hdrs());
+  if (LOGIN && !session) throw new Error('Log in first (login ID and password, top right).');
   const r = await fetch(path, opts);
+  if (r.status === 401 && LOGIN) { setSession('', ''); }
   if (!r.ok) {
     let d = r.statusText;
     try { const j = await r.json(); d = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail); } catch (e) {}

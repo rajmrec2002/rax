@@ -2,7 +2,8 @@
 Talk to a Rax Logic server.  Standard library only, so the client
 install needs nothing beyond Python (pandas only for the desktop app).
 
-    c = RaxClient('http://server:8765', token='...')
+    c = RaxClient('http://server:8765')
+    c.login('rx40217', 'k7Pq-9mXt-3vRw')      # login ID / password made by the server
     job = c.submit('TOC.xlsx', stn='ADI', hs=['S5,CO5', ...], end=['VIRAR', ...],
                    l_no=18, criss_cross=True, chainage='CH.xlsx', bands='0-120, 300+')
     job = c.wait(job['id'], on_progress=print)
@@ -29,8 +30,16 @@ class ServerError(Exception):
     pass
 
 
+class LoginRequired(ServerError):
+    """Not logged in, or the session ended (HTTP 401)."""
+
+
 def load_client_config() -> Dict[str, str]:
-    """SERVER_URL / TOKEN from ~/.rax-logic/client.conf, overridden by $RAX_SERVER / $RAX_TOKEN."""
+    """
+    SERVER_URL, UID and TOKEN (the session token after login, never the
+    password) from ~/.rax-logic/client.conf, overridden by $RAX_SERVER /
+    $RAX_TOKEN.
+    """
     cfg: Dict[str, str] = {}
     if os.path.isfile(CONFIG_PATH):
         with open(CONFIG_PATH, encoding='utf-8') as f:
@@ -45,10 +54,17 @@ def load_client_config() -> Dict[str, str]:
     return cfg
 
 
-def save_client_config(server_url: str, token: str = '') -> str:
+def _norm_url(url: str) -> str:
+    url = (url or '').strip()
+    if url and '://' not in url:
+        url = 'http://' + url
+    return url.rstrip('/')
+
+
+def save_client_config(server_url: str, token: str = '', uid: str = '') -> str:
     os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
     with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
-        f.write(f'SERVER_URL={server_url}\nTOKEN={token}\n')
+        f.write(f'SERVER_URL={server_url}\nUID={uid}\nTOKEN={token}\n')
     try:
         os.chmod(CONFIG_PATH, 0o600)
     except OSError:
@@ -84,10 +100,12 @@ class RaxClient:
         if not base_url:
             raise ServerError('No server address. Use --server http://host:8765, '
                               'set RAX_SERVER, or run:  rax-client config --server URL')
-        if '://' not in base_url:
-            base_url = 'http://' + base_url
-        self.base = base_url.rstrip('/')
-        self.token = token if token is not None else cfg.get('TOKEN', '')
+        self.base = _norm_url(base_url)
+        # the saved session belongs to the saved server only ($RAX_TOKEN: any)
+        same = _norm_url(cfg.get('SERVER_URL', '')) == self.base
+        saved = cfg.get('TOKEN', '') if same or os.environ.get('RAX_TOKEN') else ''
+        self.token = token if token is not None else saved
+        self.uid = cfg.get('UID', '') if same else ''
         self.timeout = timeout
 
     # ── low level ────────────────────────────────────────────────────────
@@ -108,6 +126,8 @@ class RaxClient:
                 detail = d if isinstance(d, str) else json.dumps(d)
             except Exception:
                 pass
+            if e.code == 401 and path != '/api/login':
+                raise LoginRequired(f'{detail}. Run:  rax-client login') from None
             raise ServerError(f'Server said: {detail} (HTTP {e.code})') from None
         except urllib.error.URLError as e:
             raise ServerError(f'Cannot reach the server at {self.base}: {e.reason}') from None
@@ -118,6 +138,41 @@ class RaxClient:
     # ── API ──────────────────────────────────────────────────────────────
     def health(self) -> dict:
         return self._request('GET', '/api/health')
+
+    def login(self, uid: str, password: str, save: bool = True) -> dict:
+        """
+        Log in with the login ID and password the server made.  Keeps the
+        session token (and, with save, writes it to client.conf; the
+        password is never stored).
+        """
+        body = urllib.parse.urlencode({'uid': uid, 'password': password}).encode()
+        s = self._request('POST', '/api/login', body, 'application/x-www-form-urlencoded')
+        self.token, self.uid = s['token'], s['uid']
+        if save:
+            save_client_config(self.base, self.token, self.uid)
+        return s
+
+    def logout(self, save: bool = True) -> None:
+        try:
+            if self.token:
+                self._request('POST', '/api/logout')
+        finally:
+            self.token = ''
+            if save:
+                save_client_config(self.base, '', self.uid)
+
+    def me(self) -> dict:
+        return self._request('GET', '/api/me')
+
+    def needs_login(self) -> bool:
+        """True if the server wants a login and this client has no valid session."""
+        if not self.health().get('login_required'):
+            return False
+        try:
+            self.me()
+            return False
+        except LoginRequired:
+            return True
 
     def submit(self, toc: str, stn: str, hs: Sequence[str] = ('',) * 4,
                end: Sequence[str] = ('',) * 4, l_no: int = 1, *,

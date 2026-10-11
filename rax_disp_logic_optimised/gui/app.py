@@ -479,8 +479,13 @@ class RaxLogicApp(QMainWindow):
         self.e_server.setToolTip(
             'Address of a Rax Logic server. The TOC, chainage and VV files are uploaded,\n'
             'the job runs on the server and the outputs are saved in the folder of field 02.\n'
-            'The login token is read from ~/.rax-logic/client.conf or $RAX_TOKEN.')
+            'Log in with the login ID and password the server administrator gave you;\n'
+            'the session (not the password) is kept in ~/.rax-logic/client.conf.')
         sl.addWidget(self.e_server, 1)
+        self.btn_login = self._btn('Login', lambda: self._ensure_login(force=True))
+        self.btn_login.setToolTip('Log in to the server (login ID and password from the '
+                                  'server administrator)')
+        sl.addWidget(self.btn_login)
         g.addWidget(srv_w, 4, 0, 1, 5)
 
     # ── Event handlers ────────────────────────────────────────────────────
@@ -815,6 +820,9 @@ class RaxLogicApp(QMainWindow):
         self.pb.setValue(0)
         server = self.e_server.text().strip()
         if server:
+            if not self._ensure_login():
+                self._set_busy(False)
+                return
             self._remote_stop.clear()
             threading.Thread(target=self._remote_task, args=(server, params),
                              daemon=True).start()
@@ -855,6 +863,72 @@ class RaxLogicApp(QMainWindow):
             proc, status = self._job
             cancel_process(proc, status)
         self._remote_stop.set()
+
+    def _ensure_login(self, force: bool = False) -> bool:
+        """
+        Make sure there is a valid session on the server in 'Run on server'
+        (asks for login ID and password when needed).  False = cancelled or
+        the server cannot be reached.
+        """
+        from ..client.api import RaxClient, ServerError
+        server = self.e_server.text().strip()
+        if not server:
+            QMessageBox.information(self, 'Login', 'Fill in "Run on server" first.')
+            return False
+        try:
+            c = RaxClient(server, timeout=15)
+            if not c.health().get('login_required'):
+                if force:
+                    QMessageBox.information(self, 'Login', f'{c.base} needs no login.')
+                return True
+            if not force and not c.needs_login():
+                return True
+        except ServerError as e:
+            QMessageBox.critical(self, 'Server', str(e))
+            return False
+        uid, msg = c.uid, ''
+        while True:
+            got = self._login_dialog(c.base, uid, msg)
+            if got is None:
+                return False
+            uid, pw = got
+            try:
+                s = c.login(uid, pw)
+            except ServerError as e:
+                msg = str(e).replace('Server said: ', '')
+                continue
+            if force:
+                QMessageBox.information(self, 'Login', f'Logged in to {c.base} as {s["uid"]}.')
+            return True
+
+    def _login_dialog(self, base: str, uid: str = '', msg: str = ''):
+        """(login ID, password), or None if cancelled."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle('Log in to the server')
+        dlg.setMinimumWidth(380)
+        lay = QVBoxLayout(dlg); lay.setSpacing(6)
+        info = QLabel(f'{base}\nLogin ID and password from the server administrator.')
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        if msg:
+            err = QLabel(msg); err.setWordWrap(True)
+            err.setStyleSheet('color: #b91c1c; font-weight: bold;')
+            lay.addWidget(err)
+        g = QGridLayout(); lay.addLayout(g)
+        e_uid = QLineEdit(uid); e_pw = QLineEdit()
+        e_pw.setEchoMode(QLineEdit.EchoMode.Password)
+        g.addWidget(QLabel('Login ID'), 0, 0); g.addWidget(e_uid, 0, 1)
+        g.addWidget(QLabel('Password'), 1, 0); g.addWidget(e_pw, 1, 1)
+        (e_pw if uid else e_uid).setFocus()
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
+                              QDialogButtonBox.StandardButton.Cancel)
+        bb.button(QDialogButtonBox.StandardButton.Ok).setText('Log in')
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None
+        return e_uid.text().strip(), e_pw.text()
 
     def _remote_task(self, server, params):
         """Upload, wait and download on a worker thread (network only, no GUI calls)."""

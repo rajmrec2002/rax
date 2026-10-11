@@ -1,7 +1,8 @@
 """
 rax-client: run dispensation on a Rax Logic server from the command line.
 
-    rax-client config --server http://server:8765 --token XXXX
+    rax-client login --server http://server:8765 --uid rx40217   (asks for the password)
+    rax-client whoami | logout
     rax-client health
     rax-client run --settings ~/.rax-logic/ADI_20261011_101500.txt --out ./ADI_out
     rax-client run --toc ADI_TOC.xlsx --stn ADI --hs "S5,CO5=VIRAR" --hs "S6,S8=SBI" \\
@@ -14,7 +15,7 @@ import argparse
 import os
 import sys
 
-from .api import RaxClient, ServerError, save_client_config
+from .api import LoginRequired, RaxClient, ServerError, save_client_config
 
 
 def _hs_args(values):
@@ -120,10 +121,19 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog='rax-client', description='Rax Logic server client')
     ap.add_argument('--server', help='server address, e.g. http://10.0.0.5:8765 '
                                      '(default: ~/.rax-logic/client.conf or $RAX_SERVER)')
-    ap.add_argument('--token', help='login token (default: client.conf or $RAX_TOKEN)')
+    ap.add_argument('--token', help='session token or server key (default: client.conf or '
+                                    '$RAX_TOKEN); normally set by "rax-client login"')
     sub = ap.add_subparsers(dest='cmd', required=True)
 
-    p = sub.add_parser('config', help='save the server address and token')
+    p = sub.add_parser('login', help='log in with the login ID and password made by the server')
+    p.add_argument('--server', dest='cfg_server', help='server address (default: the saved one)')
+    p.add_argument('--uid', help='login ID (default: the saved one, else asked)')
+    p.add_argument('--password', help='password (default: $RAX_PASSWORD, else asked; '
+                                      'it is never saved)')
+    sub.add_parser('logout', help='end the session on this PC')
+    sub.add_parser('whoami', help='show who is logged in')
+
+    p = sub.add_parser('config', help='save the server address (and a server key)')
     p.add_argument('--server', dest='cfg_server', required=True)
     p.add_argument('--token', dest='cfg_token', default='')
 
@@ -164,6 +174,8 @@ def main(argv=None) -> int:
 
     a = ap.parse_args(argv)
     try:
+        if a.cmd == 'login':
+            return cmd_login(a)
         if a.cmd == 'config':
             path = save_client_config(a.cfg_server, a.cfg_token)
             print(f'Saved to {path}')
@@ -173,6 +185,16 @@ def main(argv=None) -> int:
         c = RaxClient(a.server, a.token)
         if a.cmd == 'health':
             print(c.health()); return 0
+        if a.cmd == 'whoami':
+            if not c.health().get('login_required'):
+                print(f'{c.base}: this server needs no login'); return 0
+            who = c.me()
+            print(f'{c.base}: logged in as {who.get("uid") or who.get("name")}'
+                  f'{" (" + who["name"] + ")" if who.get("uid") and who.get("name") else ""}'
+                  f'{", administrator" if who.get("admin") else ""}')
+            return 0
+        if a.cmd == 'logout':
+            c.logout(); print('Logged out.'); return 0
         if a.cmd == 'run':
             return cmd_run(c, a)
         if a.cmd == 'check-chainage':
@@ -195,9 +217,23 @@ def main(argv=None) -> int:
             _print_job(c.cancel(a.job_id)); return 0
         if a.cmd == 'delete':
             c.delete(a.job_id); print('Deleted'); return 0
+    except LoginRequired as e:
+        print(e, file=sys.stderr)
+        return 3
     except ServerError as e:
         print(f'Error: {e}', file=sys.stderr)
         return 2
+    return 0
+
+
+def cmd_login(a) -> int:
+    import getpass
+    c = RaxClient(a.cfg_server or a.server, token='')
+    uid = a.uid or c.uid or input('Login ID: ').strip()
+    pw = a.password or os.environ.get('RAX_PASSWORD') or getpass.getpass(f'Password for {uid}: ')
+    s = c.login(uid, pw)
+    print(f'Logged in to {c.base} as {s["uid"]}{" (" + s["name"] + ")" if s.get("name") else ""}.'
+          f' The session is kept in ~/.rax-logic/client.conf (not the password).')
     return 0
 
 

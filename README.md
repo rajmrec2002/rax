@@ -15,7 +15,7 @@ You can use it three ways:
 
 ```bash
 git clone <repo> rax && cd rax
-sudo ./deploy/install.sh server --port 8765 --workers 2
+sudo bash deploy/install.sh server --port 8765 --workers 2
 ```
 
 This creates the `rax` user and installs into `/opt/rax-logic/venv`. Settings go
@@ -34,7 +34,7 @@ Clients need the token. Use `--no-token` only on a closed network.
 ## Client
 
 ```bash
-./deploy/install.sh client --server http://10.0.0.5:8765 --token <token>
+bash deploy/install.sh client --server http://10.0.0.5:8765 --token <token>
 ```
 
 This installs the desktop app (applications menu → *Rax Logic*, or `rax-logic`)
@@ -55,13 +55,24 @@ rax-client check-chainage --toc ADI_TOC.xlsx --chainage ADI_CH.xlsx
 rax-client jobs | status ID | download ID --out DIR | cancel ID
 ```
 
-**Offline PCs:** on a PC with internet, run `./deploy/install.sh bundle wheels/`.
+**Update** to the latest version. This pulls the code, reinstalls and restarts
+the service; settings, token, port and jobs are kept:
+
+```bash
+cd rax
+sudo bash deploy/install.sh update     # server
+bash deploy/install.sh update          # client, on each PC
+```
+
+Add `--no-pull` if you copied the new files across yourself, e.g. on a USB stick.
+
+**Offline PCs:** on a PC with internet, run `bash deploy/install.sh bundle wheels/`.
 Copy the repository and `wheels/` across, then add `--wheelhouse wheels/` to
 the install command.
 
 **Uninstall:**
-* Server: `sudo ./deploy/install.sh uninstall-server [--purge]`
-* Client: `./deploy/install.sh uninstall-client`
+* Server: `sudo bash deploy/install.sh uninstall-server [--purge]`
+* Client: `bash deploy/install.sh uninstall-client`
 
 ## Isolation preferred over dispensation (option 13, default YES)
 

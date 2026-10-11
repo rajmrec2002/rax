@@ -1,5 +1,17 @@
 # Changes
 
+## 2.3.0 – update command
+
+* `sudo bash deploy/install.sh update` (server) / `bash deploy/install.sh
+  update` (client) pulls the latest code, reinstalls and restarts the
+  service. Settings, token, port and jobs are kept. Use `--no-pull` for files
+  copied by hand. A client keeps its kind: command-line only, or desktop app.
+* The installer always replaces the Rax Logic code itself, so an update
+  takes effect even when the version number has not changed.
+* Includes the berthing, post-to-post, isolation and overshoot changes
+  below.
+
+
 ## 2.2.0 – isolation preferred over dispensation
 
 * **New option 13 "Isolation (ISO) preferred over dispensation?"** (default

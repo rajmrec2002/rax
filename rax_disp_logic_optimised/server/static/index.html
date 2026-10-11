@@ -112,6 +112,9 @@
       <span class="n">14</span><label for="iso_distance">Isolation: min. criss-cross distance from next stop signal (m)</label>
       <input type="number" id="iso_distance" name="iso_distance" value="120" step="any" min="0"
         title="Overshoot of a movement without overlap past its next stop signal needs isolation only if it meets another route within this distance (uses the chainage file). Blank = no limit.">
+      <span class="n">15</span><label for="iso_rear_end">Isolation: consider rear-end movements?</label>
+      <select id="iso_rear_end" name="iso_rear_end" title="An overshoot that only runs on along the other movement's route in the same direction meets no criss-cross point (rear-end only). NO: such pairs are not isolated and stay in the dispensation. YES: isolation is searched for them too.">
+        <option value="false">NO</option><option value="true">YES</option></select>
     </div>
   </div></div>
 
@@ -123,12 +126,12 @@
       <input type="number" id="cc_max" name="cc_max" value="0" step="any">
       <span class="n">12</span><label for="cc_bands">Distance bands (m)</label>
       <input type="text" id="cc_bands" name="cc_bands" placeholder="e.g. 0-120, 120-300, 300+   (blank = use min/max above)">
-      <span class="n">13</span><label for="extra">Chainages to add</label>
+      <span class="n">16</span><label for="extra">Chainages to add</label>
       <textarea id="extra" name="extra_chainage" placeholder="One per line: name, chainage   e.g.  S12, 1234.5   or   PT101, 1300"></textarea>
     </div>
     <div class="row" style="margin-left:44px">
       <button type="button" id="checkch">Check chainage</button>
-      <span class="hint">Lists signals / points of the TOC that have no chainage and adds them to field 13 to fill in.
+      <span class="hint">Lists signals / points of the TOC that have no chainage and adds them to field 16 to fill in.
         Pairs that need a missing chainage stay locked.</span>
     </div>
     <div id="chmsg" class="msg"></div>
@@ -218,6 +221,7 @@ $('f').onsubmit = async ev => {
   ev.preventDefault();
   const f = $('f'), fd = new FormData(f);
   ['chainage', 'vv'].forEach(k => { if (!$(k).files[0]) fd.delete(k); });
+  if (!$('iso_distance').value.trim()) fd.set('iso_distance', 'none');   // blank = no limit
   if (ccSel.value === 'true' && !$('chainage').files[0] && !$('extra').value.trim()
       && !confirm('No chainage file attached: every criss-cross pair will stay locked. Run anyway?')) return;
   $('runbtn').disabled = true;
@@ -241,6 +245,7 @@ $('savebtn').onclick = () => {
   lines.push('CRISS_CROSS=' + (ccSel.value === 'true' ? 'YES' : 'NO'));
   lines.push('ISO_PREFERRED=' + ($('iso').value === 'true' ? 'YES' : 'NO'));
   lines.push('ISO_DISTANCE=' + $('iso_distance').value);
+  lines.push('ISO_REAR_END=' + ($('iso_rear_end').value === 'true' ? 'YES' : 'NO'));
   const blob = new Blob([lines.map((l, i) => String(i + 1).padStart(2, '0') + '. ' + l).join('\n')], { type: 'text/plain' });
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
   a.download = (f.stn.value || 'station') + '_settings.txt'; a.click();
@@ -255,6 +260,7 @@ $('loadfile').onchange = async () => {
     if (m[1] === 'CRISS_CROSS') ccSel.value = m[2].trim().toUpperCase() === 'YES' ? 'true' : 'false';
     if (m[1] === 'ISO_PREFERRED') $('iso').value = m[2].trim().toUpperCase() === 'NO' ? 'false' : 'true';
     if (m[1] === 'ISO_DISTANCE') $('iso_distance').value = m[2].trim();
+    if (m[1] === 'ISO_REAR_END') $('iso_rear_end').value = m[2].trim().toUpperCase() === 'YES' ? 'true' : 'false';
   }
   syncCC(); show($('msg'), 'ok', 'Settings loaded. Choose the files again (browsers cannot reopen them).');
 };
@@ -288,7 +294,8 @@ async function refresh() {
         ' – pairs needing them stay locked (see CH-MISSING file).</div>' : '';
     const iso = j.isolation && j.state === 'done'
       ? '<div class="hint">Isolation: ' + (j.isolation.isolated || 0) + ' pair(s) isolated, ' +
-        (j.isolation['not isolable'] || 0) + ' cannot be, ' + (j.isolation['check layout'] || 0) + ' to check (ISO file).</div>' : '';
+        (j.isolation['not isolable'] || 0) + ' cannot be, ' + (j.isolation['check layout'] || 0) + ' to check, ' +
+        (j.isolation['rear-end ignored'] || 0) + ' rear-end only (ISO file).</div>' : '';
     const st = j.state + (j.state === 'queued' && j.queue_position ? ' (#' + j.queue_position + ')' : '');
     return '<tr><td><b>' + esc(j.stn) + '</b>' + (j.criss_cross ? '<br><span class="hint">criss-cross</span>' : '') + '</td>' +
       '<td>' + esc(when(j.created)) + '</td>' +

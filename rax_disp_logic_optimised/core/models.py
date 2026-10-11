@@ -3,7 +3,7 @@ Typed data structures for type safety and IDE support.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List
 import pandas as pd
 
 

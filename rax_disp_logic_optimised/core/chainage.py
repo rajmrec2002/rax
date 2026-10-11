@@ -15,7 +15,7 @@ Three-step silent fallback before prompting:
 import re
 import logging
 import pandas as pd
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 from ..io.writers import write_table_file
 

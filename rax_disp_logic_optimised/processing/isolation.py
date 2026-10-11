@@ -373,6 +373,21 @@ def _overshoot_paths(lay: Layout, r: _Route, by_post: Dict[str, List[_Route]],
     return out
 
 
+def _rear_end(nodes: Tuple[str, ...], k: int, dst: _Route, src: _Route) -> bool:
+    """
+    Does the overshoot (nodes, first on dst's route at k) run on along dst's
+    route in dst's own running direction?  Then it can only run into dst's
+    train from behind (rear-end); no criss-cross point exists.
+    """
+    seq = dst.rt_seq
+    if k + 1 < len(nodes) and nodes[k + 1] in seq and nodes[k] in seq:
+        return seq.index(nodes[k + 1]) > seq.index(nodes[k])
+    # it stops on the route (or leaves it at once): same direction = behind it
+    if nodes[k] == seq[0] and src.dir in ('UP', 'DN') and src.dir == dst.dir:
+        return True
+    return False
+
+
 def _alt_leg_nodes(lay: Layout, p: str, pos: str, node: str, came: Optional[str],
                    fixed: Dict[str, str], direction: str = '') -> Set[str]:
     """
@@ -411,12 +426,18 @@ class IsolationResult:
 
 def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
                    conflict_marks=('X', '~'), chainage_path: str = '',
-                   distance: Optional[float] = ISO_DISTANCE) -> IsolationResult:
+                   distance: Optional[float] = ISO_DISTANCE,
+                   rear_end: bool = False) -> IsolationResult:
     """
     `distance`: required minimum criss-cross distance (m) from the next stop
     signal; meetings farther away need no isolation.  Needs the chainage
     file; without it (or for signals / points missing from it) every
     meeting counts.
+
+    `rear_end`: an overshoot that runs on along the other movement's route
+    in the same direction meets it from behind: there is no criss-cross
+    point, only a possible rear-end collision.  False (default) = such
+    meetings need no isolation; True = isolate them as well.
     """
     routes = _routes(ltoc)
     by_name = {r.name: r for r in routes}
@@ -503,6 +524,7 @@ def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
         covered = []                    # paths already cut by an added ISO point
         live = []                       # (overshooting movt, description, facing points needed)
         seen_paths = set()
+        rear = []                       # overshoots that only run up behind the other train
         for src, dst in ((A, B), (B, A)):
             for ov in paths[src.name]:
                 k = next((i for i, n in enumerate(ov.nodes) if n in dst.rt), None)
@@ -530,13 +552,16 @@ def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
                 if cut:
                     covered.append(cut[0])
                     continue
-                # facing points it needs whose other leg really leads away
-                free = {p: v[0] for p, v in req.items() if p not in fx
-                        and not (alt(src, p, _opp(v[0]), v[1], v[2]) & dst.rt)}
                 where = (f' at {mp} {d:g} m from {src.to}' if d is not None else
                          f' at {mp} (distance not known)' if mp else '')
                 desc = (f'{src.name} overshoot past {src.to} via {", ".join(ov.via)}: '
                         + '-'.join((src.rt_seq[-1],) + ov.nodes[:k + 1]) + where)
+                if not rear_end and _rear_end(ov.nodes, k, dst, src):
+                    rear.append(f'{desc}, then on behind {dst.name}')
+                    continue                        # follows the other train: no criss-cross
+                # facing points it needs whose other leg really leads away
+                free = {p: v[0] for p, v in req.items() if p not in fx
+                        and not (alt(src, p, _opp(v[0]), v[1], v[2]) & dst.rt)}
                 live.append((src.name, desc, free, (src.rt_seq[-1],) + ov.nodes[:k + 1]))
         if not live:
             if covered:                             # isolated by an ISO point added earlier
@@ -547,6 +572,10 @@ def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
                 rows.append((a_name, b_name, 'isolated', ', '.join(sorted(set(covered))),
                              'already in ISO of ' + ', '.join(owners), '-',
                              'covered by the isolation added for another pair'))
+            elif rear:                              # rear-end only, not considered
+                stats['rear-end ignored'] += 1
+                rows.append((a_name, b_name, 'rear-end ignored', '', '', '',
+                             rear[0] + ' (no criss-cross point; rear-end not considered)'))
             else:
                 stats['separated'] += 1
             continue

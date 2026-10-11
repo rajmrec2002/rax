@@ -2,18 +2,13 @@
 Text cleaning utilities for cell values, column names, and display strings.
 """
 
-import re
 import pandas as pd
 from typing import List
 
 from ..core.constants import (
-    RE_CELL_NOISE,
-    RE_TC_SUFFIX,
-    RE_NON_ALNUM,
     RE_HAS_ALPHA,
     RE_HAS_DIGIT,
     CLEAN_PATTERNS,
-    NR_PATTERNS,
     STRIP_PUNCTUATION,
 )
 

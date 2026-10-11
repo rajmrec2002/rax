@@ -99,9 +99,38 @@ def test_trailing_point_does_not_isolate():
     s16 = dict(FROM='S16', TO='S18', UN='6', **{'RT-PT-N': '101/102N', 'RT-TC': '102T, 2CT'})
     a = dict(FROM='SH12', TO='S16', UN='2', **{'RT-TC': '2AT, 2BT'})
     b = dict(FROM='S22', TO='S24', UN='4', **{'RT-TC': '2CT', 'OV-TC': '2DT'})
-    res, _ = _run(LAYOUT + [s16, a, b])
+    # same direction: a rear-end case, so considered only with rear_end=True
+    res, _ = _run(LAYOUT + [s16, a, b], rear_end=True)
     row = _row(res, 'SH12_2', 'S22_4')
     assert row is not None and row['RESULT'] == 'not isolable'
+
+
+# Movement in the shunt's own direction whose route starts at 101T, beyond S13:
+# the shunt's overshoot can only run on behind it (rear-end), never across it.
+AHEAD = dict(FROM='S15', TO='S21', UN='5', **{'RT-PT-N': '101/102N', 'RT-TC': '101T, 1CT',
+                                              'OV-TC': '1DT'})
+
+
+def test_rear_end_is_not_considered_by_default():
+    res, _ = _run(LAYOUT + [A, AHEAD])
+    row = _row(res, 'SH11_1', 'S15_5')
+    assert row is not None and row['RESULT'] == 'rear-end ignored'
+    assert 'then on behind S15_5' in row['OVERSHOOT PATH (track circuits)']
+    assert frozenset(('SH11_1', 'S15_5')) not in res.isolated
+    assert res.summary['rear-end ignored'] >= 1
+
+
+def test_rear_end_considered_when_asked():
+    res, _ = _run(LAYOUT + [A, AHEAD], rear_end=True)
+    row = _row(res, 'SH11_1', 'S15_5')
+    assert row is not None and row['RESULT'] != 'rear-end ignored'
+    assert res.summary.get('rear-end ignored', 0) == 0
+
+
+def test_opposite_direction_meeting_is_not_rear_end():
+    # SH11 (odd, DN) and S22 (even, UP) meet head-on in 2CT: always considered
+    res, _ = _run(LAYOUT + [A, B])
+    assert _row(res, 'SH11_1', 'S22_2')['RESULT'] == 'isolated'
 
 
 def test_distance_limit_from_next_stop_signal(tmp_path):
@@ -218,7 +247,7 @@ def test_trailing_end_of_crossover_gives_no_isolation_point():
     s14 = dict(FROM='S14', TO='S20', UN='6', **{'RT-PT-R': '101/102R', 'RT-TC': '102T, 101T, 1BT'})
     a = dict(FROM='SH12', TO='S14', UN='2', **{'RT-TC': '2DT, 2CT'})
     b = dict(FROM='S30', TO='S32', UN='5', **{'RT-TC': '1BT', 'OV-TC': '1AT'})
-    res, _ = _run(LAYOUT + [s14, a, b])
+    res, _ = _run(LAYOUT + [s14, a, b], rear_end=True)
     row = _row(res, 'SH12_2', 'S30_5')
     # facing end for UP is 102 (even): that is where it can be turned away
     assert row is not None and row['ISOLATION POINTS'] == '101/102N'

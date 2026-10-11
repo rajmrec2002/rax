@@ -1,5 +1,31 @@
 # Changes
 
+## 3.0.0 – rear-end option, final polish
+
+* **Option 15 – Isolation: consider rear-end movements? (default NO).**
+  An overshoot can meet the other movement's route and then run on along it
+  in the same direction. For example, CO38 → S30 overshoots onto the line
+  S12 → S2 has just left, at PT103, 1,711 m beyond S30. There is no
+  criss-cross point there; only a rear-end collision is possible.
+  * With NO, such pairs are not isolated. They are listed in the ISO file
+    PAIRS sheet as `rear-end ignored` (with the overshoot path) and counted
+    on the SUMMARY sheet. They keep their 3.47 / 5.16 dispensation.
+  * With YES, isolation is searched for them like any other pair.
+  * A path is called rear-end only after the distance and facing-point
+    checks, so pairs no overshoot can reach are still "separated".
+  * GRF (no distance limit): 1,169 of 2,079 meeting pairs are rear-end only,
+    CO38_01D / S12_12 among them.
+  * The option is in the desktop app, the web page, settings files
+    (`ISO_REAR_END=YES|NO`), the REST API (`iso_rear_end`) and `rax-client`
+    (`--iso-rear-end YES|NO`).
+* Fixed: a blank isolation distance ("no limit") sent from the web page or
+  `rax-client` arrived at the server as the 120 m default. It is now sent as
+  `none`.
+* Web page: "Chainages to add" is renumbered 16; it clashed with option 13.
+* Clean-up: unused imports and variables removed (pyflakes clean).
+* README: isolation section updated for ISO-PT-N / ISO-PT-R and option 15.
+
+
 ## 2.3.0 – update command, interactive setup
 
 * **All isolation points in ISO-PT-N / ISO-PT-R.** These columns hold the

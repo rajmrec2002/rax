@@ -12,7 +12,6 @@ import re
 from .point_format import iso_split
 import logging
 import pandas as pd
-from typing import List
 
 logger = logging.getLogger(__name__)
 

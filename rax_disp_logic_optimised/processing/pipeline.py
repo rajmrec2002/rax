@@ -172,12 +172,17 @@ def _write_iso_report(path: str, iso, ltoc: pd.DataFrame, sqsh_iso: pd.DataFrame
          iso.summary.get('check layout', 0)),
         ('Pairs no single overshoot can bring together (double overshoot ignored)',
          iso.summary.get('separated', 0)),
+        ('Pairs where an overshoot only runs up behind the other train '
+         '(rear-end, not considered; keep dispensation)', iso.summary.get('rear-end ignored', 0)),
         ('', ''),
         ('Rule', 'One train overshoots at a time. A movement with an overlap stays within '
                  'it; one without (calling-on, shunt) runs on over unlocked points: facing '
                  'points send it the way they lie, trailing points let it through. Isolation '
                  'is needed where that reaches the other movement\'s route; reaching only its '
-                 'overlap would need both to overshoot (double overshoot) and is ignored.'),
+                 'overlap would need both to overshoot (double overshoot) and is ignored. '
+                 'An overshoot that only runs on along the other route in its direction '
+                 'meets no criss-cross point (rear-end); it is considered only when '
+                 'option 15 is YES.'),
         ('ISO-PT-N / ISO-PT-R', 'all isolation points of the movement (TOC, added, conditional). '
                                 '#<point># with <movements> = conditional: locked in that position '
                                 'only while one of those movements is set as well'),
@@ -208,6 +213,7 @@ def run_dispensation(
     extra_chainage: Optional[Dict[str, float]] = None,
     iso_preferred: bool = True,
     iso_distance: Optional[float] = 120.0,
+    iso_rear_end: bool = False,
     progress: Optional[Callable[[float], None]] = None,
     t_str: Optional[str] = None,
 ) -> RunResult:
@@ -233,6 +239,9 @@ def run_dispensation(
     `iso_distance`: required minimum criss-cross distance (m) from the next
     stop signal to the point where an overshoot meets another route
     (measured with the chainage file; None = no limit).
+    `iso_rear_end`: also isolate pairs where an overshoot only runs on along
+    the other movement's route in its direction (rear-end, no criss-cross
+    point).  False (default): such pairs are reported and left to dispensation.
     Results: STN_<stn>ISO-gen file.
     """
     prog = progress or (lambda _p: None)
@@ -279,7 +288,7 @@ def run_dispensation(
     if iso_preferred:
         base = ixl_fn(toc, hs, end, l_no) if vv_file else ltoc
         iso = find_isolation(base, vvlsqsh, chainage_path=chainage_path,
-                             distance=iso_distance)
+                             distance=iso_distance, rear_end=iso_rear_end)
         if not vv_file and (iso.toc['ISO-ADDED'] != '').any():
             # lock the added isolation points like any other ISO entry
             before = _conflicts(vvlsqsh)

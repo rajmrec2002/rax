@@ -392,6 +392,18 @@ class RaxLogicApp(QMainWindow):
             'field 03; without chainage every meeting counts). Blank = no limit.')
         g.addWidget(self.e_iso_dist, 11, 2, 1, 2)
 
+        g.addWidget(self._num_lbl('15'), 12, 0)
+        g.addWidget(self._desc_lbl('Isolation: consider rear-end movements?'), 12, 1)
+        self.cb_iso_rear = QComboBox()
+        self.cb_iso_rear.addItems(['NO', 'YES'])
+        self.cb_iso_rear.setToolTip(
+            'An overshoot that only runs on along the other movement\'s route in the same\n'
+            'direction (e.g. CO38 to S30 overshooting onto the line S12 to S2 has just left)\n'
+            'meets no criss-cross point: only a rear-end collision is possible.\n'
+            'NO: such pairs are not isolated (listed in the ISO file, kept in dispensation).\n'
+            'YES: isolation points are searched for them as well.')
+        g.addWidget(self.cb_iso_rear, 12, 2, 1, 2)
+
     def _populate_criss_card(self, g: QGridLayout):
         g.addWidget(self._num_lbl('10'), 0, 0)
         g.addWidget(self._desc_lbl('Minimum distance'), 0, 1)
@@ -532,6 +544,7 @@ class RaxLogicApp(QMainWindow):
         self.cb_cc.setCurrentText('NO')
         self.cb_iso.setCurrentText('YES')
         self.e_iso_dist.setText('120')
+        self.cb_iso_rear.setCurrentText('NO')
         self.e_cc_min.setText('0')
         self.e_cc_max.setText('0')
         self.e_cc_bands.clear()
@@ -556,6 +569,7 @@ class RaxLogicApp(QMainWindow):
             'CRISS_CROSS': self.cb_cc.currentText(),
             'ISO_PREFERRED': self.cb_iso.currentText(),
             'ISO_DISTANCE': self.e_iso_dist.text().strip(),
+            'ISO_REAR_END': self.cb_iso_rear.currentText(),
             'CC_MIN': self.e_cc_min.text(), 'CC_MAX': self.e_cc_max.text(),
             'CC_BANDS': self.e_cc_bands.text(),
             'SERVER_URL': self.e_server.text().strip(),
@@ -600,6 +614,7 @@ class RaxLogicApp(QMainWindow):
             self.cb_cc.setCurrentText(cfg.get('CRISS_CROSS', 'NO'))
             self.cb_iso.setCurrentText(cfg.get('ISO_PREFERRED', 'YES') or 'YES')
             self.e_iso_dist.setText(cfg.get('ISO_DISTANCE', '120'))
+            self.cb_iso_rear.setCurrentText(cfg.get('ISO_REAR_END', 'NO') or 'NO')
             self.e_cc_min.setText(cfg.get('CC_MIN', '0'))
             self.e_cc_max.setText(cfg.get('CC_MAX', '0'))
             self.e_cc_bands.setText(cfg.get('CC_BANDS', ''))
@@ -794,6 +809,7 @@ class RaxLogicApp(QMainWindow):
             'extra_chainage': extra,
             'iso_preferred': self.cb_iso.currentText().upper() == 'YES',
             'iso_distance': iso_dist,
+            'iso_rear_end': self.cb_iso_rear.currentText().upper() == 'YES',
         }
         self._set_busy(True)
         self.pb.setValue(0)
@@ -853,7 +869,8 @@ class RaxLogicApp(QMainWindow):
                            chainage=params['chainage_path'], vv=params['vv_file'],
                            bands=band_txt, extra_chainage=params['extra_chainage'],
                            iso_preferred=params['iso_preferred'],
-                           iso_distance=params['iso_distance'])
+                           iso_distance=params['iso_distance'],
+                           iso_rear_end=params['iso_rear_end'])
             job_id = job['id']
             st = job
             while st.get('state') not in STATES_FINAL:
@@ -908,7 +925,9 @@ class RaxLogicApp(QMainWindow):
                     f'({iso.get("iso points added", 0)} ISO point(s) added, '
                     f'{iso.get("conditional entries", 0)} conditional) – no dispensation needed. '
                     f'{iso.get("not isolable", 0)} cannot be isolated, '
-                    f'{iso.get("check layout", 0)} to check. See the ISO file.')
+                    f'{iso.get("check layout", 0)} to check, '
+                    f'{iso.get("rear-end ignored", 0)} rear-end only (not considered). '
+                    'See the ISO file.')
         if st.get('checks'):
             msg += f'\n\nTOC-CHECK: {st["checks"]} finding(s) – see the TOC-CHECK file.'
         (QMessageBox.warning if miss else QMessageBox.information)(self, 'Success', msg)

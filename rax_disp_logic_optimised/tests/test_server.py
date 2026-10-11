@@ -69,7 +69,8 @@ def test_run_job_and_download(server, files, tmp_path):
     toc, ch = files
     c = RaxClient(url, token=TOKEN)
     job = c.submit(toc, 'TST', ['S3=', ''], l_no=18, criss_cross=True, chainage=ch,
-                   bands='0-120, 120-3000', extra_chainage={'S3': 1000})
+                   bands='0-120, 120-3000', extra_chainage={'S3': 1000},
+                   iso_distance=None, iso_rear_end=True)
     assert job['state'] in ('queued', 'running')
     st = c.wait(job['id'], poll=0.3, timeout=120)
     assert st['state'] == 'done', st.get('error')
@@ -80,6 +81,11 @@ def test_run_job_and_download(server, files, tmp_path):
     assert set(st['outputs'].values()) <= got
     # uploaded files stay on the server under the job, not elsewhere
     assert os.path.isdir(data / 'jobs' / job['id'] / 'input')
+    # the isolation options reach the job
+    import json
+    sent = json.load(open(data / 'jobs' / job['id'] / 'job.json'))
+    sent = sent.get('params', sent)
+    assert sent['iso_rear_end'] is True and sent['iso_distance'] is None
     assert any(j['id'] == job['id'] for j in c.jobs())
     c.delete(job['id'])
     with pytest.raises(ServerError, match='404'):
@@ -111,4 +117,5 @@ def test_web_page(server):
     import urllib.request
     html = urllib.request.urlopen(url + '/').read().decode()
     assert 'Physical Progress Module' in html and 'const LOGIN = true' in html
+    assert 'name="iso_rear_end"' in html and 'ISO_REAR_END' in html
     assert urllib.request.urlopen(url + '/assets/app_icon.png').status == 200

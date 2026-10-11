@@ -2,11 +2,10 @@
 TOC formatting – movement text, direction calculation, field assembly.
 """
 
-import re
 import numpy as np
 import pandas as pd
 
-from ..utils.text_cleaning import coerce_string_columns, clean_columns_vectorized
+from ..utils.text_cleaning import clean_columns_vectorized
 
 _FRTO_DEFAULT = "from"
 

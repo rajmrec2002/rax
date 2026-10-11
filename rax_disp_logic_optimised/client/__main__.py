@@ -66,6 +66,8 @@ def cmd_run(c: RaxClient, a) -> int:
             a.iso = (s.get('ISO_PREFERRED') or 'YES').upper()
         if a.iso_distance is None and s.get('ISO_DISTANCE', '') != '':
             a.iso_distance = s['ISO_DISTANCE']
+        if a.iso_rear_end is None:
+            a.iso_rear_end = (s.get('ISO_REAR_END') or 'NO').upper()
         a.cc_min = a.cc_min if a.cc_min is not None else float(s.get('CC_MIN') or 0)
         a.cc_max = a.cc_max if a.cc_max is not None else float(s.get('CC_MAX') or 0)
         if s.get('VV_SQSH', '').upper() == 'YES':
@@ -84,7 +86,8 @@ def cmd_run(c: RaxClient, a) -> int:
                    extra_chainage=_extra(a.add_chainage),
                    iso_preferred=(a.iso or 'YES').upper() != 'NO',
                    iso_distance=(120.0 if a.iso_distance is None else
-                                 float(a.iso_distance) if str(a.iso_distance).strip() else None))
+                                 float(a.iso_distance) if str(a.iso_distance).strip() else None),
+                   iso_rear_end=(a.iso_rear_end or 'NO').upper() == 'YES')
     print(f'Job {job["id"]} submitted to {c.base}')
     if a.no_wait:
         return 0
@@ -104,6 +107,7 @@ def cmd_run(c: RaxClient, a) -> int:
               f'({iso.get("iso points added", 0)} ISO point(s) added, '
               f'{iso.get("conditional entries", 0)} conditional); '
               f'{iso.get("not isolable", 0)} cannot be isolated; '
+              f'{iso.get("rear-end ignored", 0)} rear-end only (not considered); '
               f'{iso.get("check layout", 0)} to check (see the ISO file)')
     if st.get('check_summary'):
         print('TOC-CHECK findings:')
@@ -142,6 +146,9 @@ def main(argv=None) -> int:
     p.add_argument('--iso-distance', default=None, metavar='METRES',
                    help='isolation: min. criss-cross distance from the next stop signal '
                         '(default 120; "" = no limit)')
+    p.add_argument('--iso-rear-end', choices=['YES', 'NO', 'yes', 'no'], default=None,
+                   help='isolation: also consider rear-end movements (an overshoot that only '
+                        'runs on behind the other train; default NO)')
     p.add_argument('--out', help='folder for the outputs')
     p.add_argument('--no-wait', action='store_true', help='submit and return the job id')
 

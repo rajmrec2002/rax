@@ -72,6 +72,7 @@ In the desktop app:
 rax-client run --settings ~/.rax-logic/ADI_20261011_101500.txt   # file saved by "Save Settings"
 rax-client run --toc ADI_TOC.xlsx --stn ADI --hs "S5,CO5=VIRAR" --hs "S6,S8=SBI" \
                --lines 18 --criss-cross --chainage ADI_CH.xlsx --bands "0-120,120-300,300+"
+# isolation options 13-15: --iso YES|NO  --iso-distance 120 ("" = no limit)  --iso-rear-end NO|YES
 rax-client check-chainage --toc ADI_TOC.xlsx --chainage ADI_CH.xlsx
 rax-client jobs | status ID | download ID --out DIR | cancel ID
 ```
@@ -110,8 +111,21 @@ facing point outside both routes and overlaps to lock the other way. It chooses
 the point that locks the fewest other movements:
 
 * if no other movement needs it the other way, it is added to **ISO**;
-* otherwise it is locked conditionally, in column **COND-ISO**:
-  `#139/140N# with S33_39 set`.
+* otherwise it is locked conditionally, only while the other movement is set.
+
+**ISO-PT-N / ISO-PT-R** hold all isolation points of a movement: the TOC's,
+the added ones, and the conditional ones with their condition, e.g.
+`111/112, #139/140# with S33_39`. The locking, criss-cross and dispensation
+texts use only the unconditional ones. ISO-ADDED says which points the search
+added and for which pair.
+
+**Rear-end movements (option 15, default NO).** Sometimes the overshoot meets
+the other movement's route and then runs on along it in the same direction.
+For example, CO38 → S30 overshoots onto the line S12 → S2 has just left, at
+PT103, 1,711 m beyond S30. There is no criss-cross point there; only a
+rear-end collision is possible. With NO, such pairs are not isolated. They are
+listed in the ISO file as `rear-end ignored` and keep their dispensation. With
+YES, isolation is searched for them like any other pair.
 
 Isolated pairs need no 3.47 / 5.16 dispensation. Details, including each
 overshoot path, are in `STN_<stn>ISO-gen…xlsx`.
@@ -123,7 +137,7 @@ app no longer leaves gaps silently:
 
 * **Before the run**, the desktop app lists the signals and points missing
   from the chainage file (or all of them if no file is attached). You can type
-  values there. The web page has the same check (field 13), and `rax-client`
+  values there. The web page has the same check (field 16), and `rax-client`
   takes `--add-chainage S12=1234.5`.
 * Values you type are used for that run only. The chainage actually used is
   written to `…CH-USED…csv`, and your chainage file is never changed.

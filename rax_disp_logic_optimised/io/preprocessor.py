@@ -8,20 +8,16 @@ cell cleaning, and row filtering – all vectorized.
 import re
 import logging
 import pandas as pd
-from typing import List
 
 from ..core.constants import (
     TOC_INPUT_COLS, TOC_BLANK_COLS, ALL_TOC_COLS, TOC_EXTRA_COLS,
     STR_COLS, PT_COLS, TC_COLS, DROP_COL_NAMES,
-    COL_ALIASES, RE_CELL_NOISE, RE_TC_SUFFIX,
+    COL_ALIASES, RE_TC_SUFFIX,
     EXCEL_ENGINES,
 )
 from .readers import _engine_for
 from ..utils.patterns import norm_col, strip_isolated_specials
-from ..utils.text_cleaning import (
-    has_alphanumeric_content,
-    coerce_string_columns,
-)
+from ..utils.text_cleaning import coerce_string_columns
 
 logger = logging.getLogger(__name__)
 

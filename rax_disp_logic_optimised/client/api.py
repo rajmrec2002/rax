@@ -124,14 +124,16 @@ class RaxClient:
                criss_cross: bool = False, chainage: str = '', vv: str = '',
                bands: str = '', cc_min: float = 0, cc_max: float = 0,
                extra_chainage: Optional[Dict[str, float]] = None,
-               iso_preferred: bool = True, iso_distance: Optional[float] = 120.0) -> dict:
+               iso_preferred: bool = True, iso_distance: Optional[float] = 120.0,
+               iso_rear_end: bool = False) -> dict:
         hs = list(hs) + [''] * (4 - len(hs))
         end = list(end) + [''] * (4 - len(end))
         fields = {'stn': stn, 'berthing_lines': int(l_no),
                   'criss_cross': 'true' if criss_cross else 'false',
                   'cc_bands': bands or '', 'cc_min': cc_min, 'cc_max': cc_max,
                   'iso_preferred': 'true' if iso_preferred else 'false',
-                  'iso_distance': '' if iso_distance is None else str(iso_distance),
+                  'iso_distance': 'none' if iso_distance is None else str(iso_distance),
+                  'iso_rear_end': 'true' if iso_rear_end else 'false',
                   'extra_chainage': '\n'.join(f'{k}, {v}' for k, v in (extra_chainage or {}).items())}
         for i, g in enumerate('abcd'):
             fields[f'hs_{g}'] = hs[i] or ''

@@ -15,10 +15,9 @@ import multiprocessing as mp
 import pandas as pd
 from typing import Optional, Tuple
 
-from ..core.constants import CLEAN_PATTERNS, NR_PATTERNS
+from ..core.constants import NR_PATTERNS
 from ..utils.patterns import safe_pattern
 from .point_format import iso_uncond
-from ..utils.logging_util import debug_print
 
 logger = logging.getLogger(__name__)
 
@@ -326,7 +325,7 @@ def _criss_row_worker(i: int) -> list:
             d1l = d2l = d3l = d4l = d5l = d6l = d7l = d8l = d9l = d10l = ''
             yovptr_s: list = []; xovptr_s: list = []   # populated in d5-d6 block
 
-            xft = str(sq_idx[i]); yft = str(sq_col[j])
+            xft = str(sq_idx[i])
             if xft[0:2] != 'SH':
                 xf = td['FROM'][i]; yf = td['FROM'][j]
                 xdir = td['DIR'][i]; ydir = td['DIR'][j]
@@ -422,8 +421,6 @@ def _criss_row_worker(i: int) -> list:
 
                 cx1 = [y for y in yptr_n if y in xptn and y and y[0].isdigit()]
                 cy1 = [x for x in xptr_n if x in yptn and x and x[0].isdigit()]
-                cxt1 = _rm_dup([t for t in x_tc if t in yrttc and len(re.sub(r'[a-zA-Z]','',t)) >= 3])
-                cyt1 = _rm_dup([t for t in y_tc if t in xrttc and len(re.sub(r'[a-zA-Z]','',t)) >= 3])
 
                 def _dir_filter(lst, d):
                     return [x for x in lst if (len(str(x)) > 3)

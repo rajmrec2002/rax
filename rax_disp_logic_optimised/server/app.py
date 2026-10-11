@@ -114,6 +114,7 @@ def create_app(cfg: Optional[ServerConfig] = None) -> FastAPI:
         cc_bands: str = Form(''),
         cc_min: float = Form(0), cc_max: float = Form(0),
         extra_chainage: str = Form(''),
+        iso_preferred: bool = Form(True),
     ):
         from ..processing.pipeline import parse_bands, parse_chainage_text
         try:
@@ -137,6 +138,7 @@ def create_app(cfg: Optional[ServerConfig] = None) -> FastAPI:
             'l_no': berthing_lines, 'criss_cross': criss_cross,
             'bands': [[lo, None if hi == float('inf') else hi] for lo, hi in bands],
             'extra_chainage': extra,
+            'iso_preferred': iso_preferred,
         }
         job_id = await run_in_threadpool(jobs().create, params, files)
         return _get(job_id)

@@ -12,7 +12,7 @@ from typing import Dict, List, Tuple
 KEYS = [
     'TOC_FILE', 'SAVE_DIR', 'CHAINAGE_FILE', 'VV_FILE', 'STATION_NAME',
     'HS_A', 'END_A', 'HS_B', 'END_B', 'HS_C', 'END_C', 'HS_D', 'END_D',
-    'BERTHING_LINES', 'VV_SQSH', 'CRISS_CROSS', 'CC_MIN', 'CC_MAX', 'CC_BANDS',
+    'BERTHING_LINES', 'VV_SQSH', 'CRISS_CROSS', 'ISO_PREFERRED', 'CC_MIN', 'CC_MAX', 'CC_BANDS',
     'SERVER_URL',
 ]
 

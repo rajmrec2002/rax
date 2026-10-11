@@ -84,7 +84,8 @@ class JobManager:
             json.dump(params, f, indent=1)
         write_status(os.path.join(d, 'status.json'), id=job_id, state='queued', progress=0,
                      created=time.time(), stn=params['stn'],
-                     criss_cross=bool(params.get('criss_cross')), error='')
+                     criss_cross=bool(params.get('criss_cross')),
+                     iso_preferred=bool(params.get('iso_preferred', True)), error='')
         logger.info('Job %s queued (%s)', job_id, params['stn'])
         return job_id
 

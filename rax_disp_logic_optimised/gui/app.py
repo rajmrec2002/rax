@@ -368,6 +368,18 @@ class RaxLogicApp(QMainWindow):
         self.cb_cc.addItems(['NO', 'YES'])
         g.addWidget(self.cb_cc, 9, 2, 1, 2)
 
+        g.addWidget(self._num_lbl('13'), 10, 0)
+        g.addWidget(self._desc_lbl('Isolation (ISO) preferred over dispensation?'), 10, 1)
+        self.cb_iso = QComboBox()
+        self.cb_iso.addItems(['YES', 'NO'])
+        self.cb_iso.setToolTip(
+            'YES: for every pair of movements the locking allows together, find points\n'
+            'outside both routes and overlaps that isolate them. Isolated pairs are left\n'
+            'out of the 3.47 / 5.16 dispensation; points no other movement needs the\n'
+            'other way are added to ISO, the rest become conditional isolation\n'
+            '(COND-ISO column, e.g. #121N# with S12_12 set). See the ISO output file.')
+        g.addWidget(self.cb_iso, 10, 2, 1, 2)
+
     def _populate_criss_card(self, g: QGridLayout):
         g.addWidget(self._num_lbl('10'), 0, 0)
         g.addWidget(self._desc_lbl('Minimum distance'), 0, 1)
@@ -506,6 +518,7 @@ class RaxLogicApp(QMainWindow):
         self.cb_lno.setCurrentIndex(0)
         self.cb_vvm.setCurrentText('NO')
         self.cb_cc.setCurrentText('NO')
+        self.cb_iso.setCurrentText('YES')
         self.e_cc_min.setText('0')
         self.e_cc_max.setText('0')
         self.e_cc_bands.clear()
@@ -528,6 +541,7 @@ class RaxLogicApp(QMainWindow):
             'BERTHING_LINES': self.cb_lno.currentText(),
             'VV_SQSH': self.cb_vvm.currentText(),
             'CRISS_CROSS': self.cb_cc.currentText(),
+            'ISO_PREFERRED': self.cb_iso.currentText(),
             'CC_MIN': self.e_cc_min.text(), 'CC_MAX': self.e_cc_max.text(),
             'CC_BANDS': self.e_cc_bands.text(),
             'SERVER_URL': self.e_server.text().strip(),
@@ -570,6 +584,7 @@ class RaxLogicApp(QMainWindow):
             self.cb_lno.setCurrentText(cfg.get('BERTHING_LINES', '1'))
             self.cb_vvm.setCurrentText(cfg.get('VV_SQSH', 'NO'))
             self.cb_cc.setCurrentText(cfg.get('CRISS_CROSS', 'NO'))
+            self.cb_iso.setCurrentText(cfg.get('ISO_PREFERRED', 'YES') or 'YES')
             self.e_cc_min.setText(cfg.get('CC_MIN', '0'))
             self.e_cc_max.setText(cfg.get('CC_MAX', '0'))
             self.e_cc_bands.setText(cfg.get('CC_BANDS', ''))
@@ -755,6 +770,7 @@ class RaxLogicApp(QMainWindow):
             'criss_cross': criss, 'chainage_path': self.fp_ch if criss else '',
             'bands': [[lo, None if hi == float('inf') else hi] for lo, hi in (bands or [])],
             'extra_chainage': extra,
+            'iso_preferred': self.cb_iso.currentText().upper() == 'YES',
         }
         self._set_busy(True)
         self.pb.setValue(0)
@@ -812,7 +828,8 @@ class RaxLogicApp(QMainWindow):
             job = c.submit(params['toc_path'], params['stn'], params['hs'], params['end'],
                            params['l_no'], criss_cross=params['criss_cross'],
                            chainage=params['chainage_path'], vv=params['vv_file'],
-                           bands=band_txt, extra_chainage=params['extra_chainage'])
+                           bands=band_txt, extra_chainage=params['extra_chainage'],
+                           iso_preferred=params['iso_preferred'])
             job_id = job['id']
             st = job
             while st.get('state') not in STATES_FINAL:
@@ -861,6 +878,13 @@ class RaxLogicApp(QMainWindow):
                     f'{", ".join(miss[:30])}{" …" if len(miss) > 30 else ""}\n'
                     'Criss-cross pairs that need them stay locked. Fill in the '
                     'CH-MISSING file in the output folder and run again.')
+        iso = st.get('isolation') or {}
+        if iso:
+            msg += (f'\n\nIsolation: {iso.get("isolated", 0)} pair(s) isolated '
+                    f'({iso.get("iso points added", 0)} ISO point(s) added, '
+                    f'{iso.get("conditional entries", 0)} conditional) – no dispensation needed. '
+                    f'{iso.get("not isolable", 0)} cannot be isolated, '
+                    f'{iso.get("check layout", 0)} to check. See the ISO file.')
         if st.get('checks'):
             msg += f'\n\nTOC-CHECK: {st["checks"]} finding(s) – see the TOC-CHECK file.'
         (QMessageBox.warning if miss else QMessageBox.information)(self, 'Success', msg)

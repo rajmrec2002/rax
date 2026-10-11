@@ -63,7 +63,15 @@ def re_vice_versa(path: str) -> pd.DataFrame:
     from ..io.readers import read_table_file
 
     sq = read_table_file(path)
-    sq = sq.fillna('').replace('~', '', regex=True)
+    # The saved sheet has the route names in its first column: use them as
+    # row labels so cell (i, j) and (j, i) refer to the same pair.
+    first = sq.columns[0]
+    if list(sq[first].astype(str).str.strip()) == [str(c).strip() for c in sq.columns[1:]]:
+        sq = sq.set_index(first)
+        sq.index = sq.index.astype(str).str.strip()
+        sq.index.name = 'FROM-TO'
+        sq.columns = [str(c).strip() for c in sq.columns]
+    sq = sq.fillna('').astype(str).replace('~', '', regex=True)
 
     n_rows, n_cols = sq.shape
     l = min(n_rows, n_cols)
@@ -85,8 +93,6 @@ def re_vice_versa(path: str) -> pd.DataFrame:
                 sq.iat[i, j] = '~'
                 sq.iat[j, i] = '~'
 
-    idx_name = sq.index.name or 'FROM-TO'
-    sq.insert(0, idx_name, sq.index)
     return sq
 
 

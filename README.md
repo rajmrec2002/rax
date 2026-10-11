@@ -63,6 +63,23 @@ the install command.
 * Server: `sudo ./deploy/install.sh uninstall-server [--purge]`
 * Client: `./deploy/install.sh uninstall-client`
 
+## Isolation preferred over dispensation (option 13, default YES)
+
+For each pair of movements the locking allows at the same time, the tool
+finds points outside both routes and overlaps that, set in the right
+position, stop a train on one from running onto the other. Isolated pairs need
+no 3.47 / 5.16 dispensation.
+
+* If no other movement needs the point the other way, it is added to the
+  movement's **ISO** (see column ISO-ADDED).
+* If others do, it is locked only while both movements are set. This
+  conditional isolation goes in column **COND-ISO**:
+  `#121N# with S12_12 set`.
+
+Details are in `STN_<stn>ISO-gen…xlsx`. The track layout is worked out from
+the TOC (track circuits in running order). Anything doubtful is listed in its
+LAYOUT CHECK sheet and left with its dispensation.
+
 ## Missing chainage
 
 For criss-cross, every signal and point used by a route needs a chainage. The

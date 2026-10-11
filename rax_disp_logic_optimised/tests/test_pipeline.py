@@ -118,3 +118,19 @@ def test_toc_checks_list_unrecognised_track_circuit_entries():
     c = toc_data_checks(toc)
     hit = c[c['CHECK'].str.startswith('Track-circuit entry not recognised')]
     assert len(hit) == 1 and hit.iat[0, 2] == 'OV-TC: NLT2'
+
+
+def test_vv_square_sheet_round_trip(tmp_path):
+    """Feeding back the tool's own square sheet as the corrected VV sheet changes nothing."""
+    a = tmp_path / 'a'; a.mkdir()
+    b = tmp_path / 'b'; b.mkdir()
+    toc = _write_toc(tmp_path)
+    r1 = run_dispensation(toc, str(a), 'TST', NO_HS, NO_END, 18, iso_preferred=False, t_str='T')
+    r2 = run_dispensation(toc, str(b), 'TST', NO_HS, NO_END, 18, iso_preferred=False, t_str='T',
+                          vv_file=r1.paths['SQSH'])
+    d1 = pd.read_excel(r1.paths['TOC'], dtype=str).fillna('')['NEW-DSP2'].tolist()
+    d2 = pd.read_excel(r2.paths['TOC'], dtype=str).fillna('')['NEW-DSP2'].tolist()
+    assert d1 == d2 and any(d1)
+    s1 = pd.read_excel(r1.paths['SQSH'], index_col=0).fillna('')
+    s2 = pd.read_excel(r2.paths['SQSH'], index_col=0).fillna('')
+    assert s1.equals(s2)

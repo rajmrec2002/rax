@@ -21,6 +21,7 @@ from ..io.preprocessor import detect_toc_format, read_formatted_toc, read_toc_fi
 from ..io.writers import write_table_file
 from .criss_cross import criss_cross_mvt, load_chainage, missing_chainage
 from .dispensation import disp_lit_fn
+from .isolation import apply_added_iso, find_isolation, isolated_pairs_sheet
 from .locking import ixl_fn
 from .square_sheet import (
     new_disp_gen_frm_sqsh, new_lck_gen_frm_sqsh, re_vice_versa, sqsh_fn, vice_versa,
@@ -87,6 +88,8 @@ class RunResult:
     # Signals / points with no chainage (criss-cross runs only).  Pairs
     # that need one of them stay locked.
     missing_chainage: List[str] = field(default_factory=list)
+    # Isolation (ISO preferred over dispensation): counts by result
+    isolation: Dict[str, int] = field(default_factory=dict)
 
 
 def _read_toc(toc_path: str, hs, end, l_no: int) -> pd.DataFrame:
@@ -150,6 +153,36 @@ def _chainage_with_extra(chainage_path: str, extra: Dict[str, float], out_path: 
     return out_path
 
 
+def _conflicts(sqsh: pd.DataFrame) -> set:
+    m = sqsh.fillna('').astype(str).isin(['X', '~'])
+    idx = list(sqsh.index)
+    return {frozenset((idx[i], sqsh.columns[j])) for i, j in zip(*m.values.nonzero()) if i != j}
+
+
+def _write_iso_report(path: str, iso, ltoc: pd.DataFrame, sqsh_iso: pd.DataFrame) -> None:
+    """Isolation workbook: summary, pairs, per movement, layout check, square sheet."""
+    summary = pd.DataFrame([
+        ('Pairs isolated (no dispensation needed)', iso.summary.get('isolated', 0)),
+        ('  isolation points added to ISO', iso.summary.get('iso points added', 0)),
+        ('  conditional isolation entries', iso.summary.get('conditional entries', 0)),
+        ('Pairs that cannot be isolated (keep dispensation)', iso.summary.get('not isolable', 0)),
+        ('Pairs to check: track layout from TOC doubtful (keep dispensation)',
+         iso.summary.get('check layout', 0)),
+        ('Pairs with no connection within %d track circuits' % 4, iso.summary.get('separated', 0)),
+        ('', ''),
+        ('COND-ISO format', '#<point><N/R># with <movements> set = point locked in that position '
+                            'only while this movement and one of those movements are both set'),
+    ], columns=['ITEM', 'VALUE'])
+    by_movt = ltoc[['FROM-TO', 'ISO', 'ISO-ADDED', 'COND-ISO']]
+    by_movt = by_movt[(by_movt['ISO-ADDED'] != '') | (by_movt['COND-ISO'] != '')]
+    with pd.ExcelWriter(path, engine='openpyxl') as xw:
+        summary.to_excel(xw, sheet_name='SUMMARY', index=False)
+        iso.report.to_excel(xw, sheet_name='PAIRS', index=False)
+        by_movt.to_excel(xw, sheet_name='BY MOVEMENT', index=False)
+        iso.checks.to_excel(xw, sheet_name='LAYOUT CHECK', index=False)
+        sqsh_iso.to_excel(xw, sheet_name='SQSH (I = isolated)')
+
+
 def run_dispensation(
     toc_path: str,
     save_dir: str,
@@ -162,6 +195,7 @@ def run_dispensation(
     chainage_path: str = '',
     bands: Optional[Sequence[Band]] = None,
     extra_chainage: Optional[Dict[str, float]] = None,
+    iso_preferred: bool = True,
     progress: Optional[Callable[[float], None]] = None,
     t_str: Optional[str] = None,
 ) -> RunResult:
@@ -176,6 +210,13 @@ def run_dispensation(
     chainage file; the chainage actually used is written as CH-USED.
     Signals and points still without chainage are listed in TOC-CHECK and
     written to a CH-MISSING template (fill in GR_CH and re-run).
+
+    `iso_preferred`: for every pair of movements the locking allows together,
+    look for isolation points outside both routes and overlaps (see
+    processing/isolation.py).  Isolated pairs are left out of the 3.47 /
+    5.16 dispensation; points no other movement needs the other way are
+    added to ISO, the rest become conditional isolation (COND-ISO column).
+    Results: STN_<stn>ISO-gen file.
     """
     prog = progress or (lambda _p: None)
     t_str = t_str or strftime('%Y%m%d_%H-%M')
@@ -210,16 +251,41 @@ def run_dispensation(
         ltoc = toc
         vvlsqsh = re_vice_versa(vv_file)
         vvlsqsh.fillna('', inplace=True)
-        write_table_file(vvlsqsh, res.paths['SQSH'], index=False)
+        write_table_file(vvlsqsh, res.paths['SQSH'], index=True)
     else:
         ltoc = ixl_fn(toc, hs, end, l_no)
         vvlsqsh = vice_versa(sqsh_fn(ltoc, 'FROM-TO', 'NEW-LOCK'))
         write_table_file(vvlsqsh, res.paths['SQSH'], index=True)
+    prog(15)
+
+    isolated = set()
+    if iso_preferred:
+        base = ixl_fn(toc, hs, end, l_no) if vv_file else ltoc
+        iso = find_isolation(base, vvlsqsh)
+        if not vv_file and (iso.toc['ISO-ADDED'] != '').any():
+            # lock the added isolation points like any other ISO entry
+            before = _conflicts(vvlsqsh)
+            ltoc = ixl_fn(apply_added_iso(toc, iso), hs, end, l_no)
+            vvlsqsh = vice_versa(sqsh_fn(ltoc, 'FROM-TO', 'NEW-LOCK'))
+            write_table_file(vvlsqsh, res.paths['SQSH'], index=True)
+            extra = _conflicts(vvlsqsh) - before
+            if extra:
+                logger.warning('Isolation: %d pair(s) newly locked by added ISO points', len(extra))
+        cols = iso.toc.set_index('FROM-TO')[['ISO-ADDED', 'COND-ISO']]
+        ltoc = ltoc.join(cols, on='FROM-TO')
+        ltoc[['ISO-ADDED', 'COND-ISO']] = ltoc[['ISO-ADDED', 'COND-ISO']].fillna('')
+        isolated = iso.isolated
+        res.isolation = iso.summary
+        checks.append(iso.checks.assign(SET='layout (isolation)'))
+        res.paths['ISO'] = p('ISO')
+        _write_iso_report(res.paths['ISO'], iso, ltoc, isolated_pairs_sheet(vvlsqsh, isolated))
     prog(20)
 
     def _documents(sqsh, sqsh_xx, suffix):
         l_toc = new_lck_gen_frm_sqsh(ltoc.copy(), sqsh, 'NEW-LCK2')
-        dltoc = new_disp_gen_frm_sqsh(l_toc, sqsh, 'NEW-DSP2')
+        # isolated pairs run together under isolation: no dispensation
+        dltoc = new_disp_gen_frm_sqsh(l_toc, isolated_pairs_sheet(sqsh, isolated, 'X')
+                                      if isolated else sqsh, 'NEW-DSP2')
         res.paths['TOC' + suffix] = p('TOC' + suffix)
         write_table_file(dltoc, res.paths['TOC' + suffix], index=False)
         checks.append(permitted_pair_checks(dltoc).assign(

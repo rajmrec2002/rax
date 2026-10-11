@@ -48,6 +48,30 @@ def pt_format(toc: pd.DataFrame, pt_column: str, NR: str) -> pd.Series:
     return toc.iloc[:, col_idx].apply(process_row).astype(str)
 
 
+_RE_ISO_TOKEN_PT = re.compile(r'(\d{1,4}(?:/\d{1,4})?)([NR]?)')
+
+
+def parse_iso(val: str):
+    """
+    'ISO' cell -> ([('121', 'N'), ('111/112', 'R')], ['142T'])
+
+    Entries are separated by commas, spaces or '^'.  A point written
+    without N or R means Normal.  Entries ending in T are track circuits.
+    """
+    pts, tcs = [], []
+    for tok in re.split(r'[,\s\^;]+', str(val).upper()):
+        tok = tok.strip(' .()')
+        if not tok or tok == 'NAN':
+            continue
+        if _RE_ISO_TC.fullmatch(tok) or (tok.endswith('T') and not tok[:-1].isdigit()
+                                          and any(c.isdigit() for c in tok)):
+            tcs.append(tok)
+            continue
+        for num, pos in _RE_ISO_TOKEN_PT.findall(tok):
+            pts.append((num, pos or 'N'))
+    return pts, tcs
+
+
 def iso_pt_format(toc: pd.DataFrame, pt_column: str) -> pd.Series:
     """
     Parse the ISO column into components:
@@ -58,25 +82,17 @@ def iso_pt_format(toc: pd.DataFrame, pt_column: str) -> pd.Series:
     toc['ISO-PT-N'] = ''
     toc['ISO-PT-R'] = ''
 
-    iso_clean = (
-        toc[pt_column]
-        .astype(str)
-        .str.replace(r'[ ,\^]', '', regex=True)
-        .fillna('')
-    )
-
     pt_vals = []
     tc_vals = []
     ptn_vals = []
     ptr_vals = []
 
-    for val in iso_clean:
-        pts = _RE_ISO_PT.findall(val)
-        tcs = _RE_ISO_TC.findall(val)
-        pt_vals.append(', '.join(pts))
+    for val in toc[pt_column].fillna('').astype(str):
+        pts, tcs = parse_iso(val)
+        pt_vals.append(', '.join(p + pos for p, pos in pts))
         tc_vals.append(', '.join(tcs))
-        ptn_vals.append(', '.join(p[:-1] for p in pts if p[-1] == 'N'))
-        ptr_vals.append(', '.join(p[:-1] for p in pts if p[-1] == 'R'))
+        ptn_vals.append(', '.join(p for p, pos in pts if pos == 'N'))
+        ptr_vals.append(', '.join(p for p, pos in pts if pos == 'R'))
 
     toc['ISO-TC'] = pd.Series(tc_vals, index=toc.index, dtype='str')
     toc['ISO-PT-N'] = pd.Series(ptn_vals, index=toc.index, dtype='str')

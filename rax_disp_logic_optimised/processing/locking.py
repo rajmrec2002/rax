@@ -217,10 +217,11 @@ def ixl_fn(xtoc: pd.DataFrame, hs, end, l_no) -> pd.DataFrame:
     toc['RT-PT-R'] = pt_format(toc, 'RT-PT-R', 'R')
     toc['ISO'] = iso_pt_format(toc, 'ISO')
 
-    # Strip N/R suffixes from ISO display column
+    # ISO display column: a point without a letter is Normal, so drop only
+    # the N; a Reverse isolation point keeps its R ('147/148, 438R').
     toc['ISO'] = (
         toc['ISO'].astype(str)
-        .str.replace(r'(?<=[0-9])[NR]', '', regex=True)
+        .str.replace(r'(?<=[0-9])N', '', regex=True)
         .str.strip(', ')
     )
 

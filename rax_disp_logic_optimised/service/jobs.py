@@ -17,6 +17,7 @@ Job parameters (all JSON-serialisable):
     chainage_path                      str
     bands                              '0-120, 120-300, 300+'  or [[lo, hi], ...]
     extra_chainage                     {'S12': 1234.5, ...}
+    iso_preferred                      bool (default True)
     t_str                              optional time stamp for file names
 """
 
@@ -94,6 +95,7 @@ def run_job(params: Dict[str, Any], status_path: str) -> Dict[str, Any]:
             chainage_path=params.get('chainage_path', ''),
             bands=_bands(params.get('bands')),
             extra_chainage=params.get('extra_chainage') or None,
+            iso_preferred=bool(params.get('iso_preferred', True)),
             progress=progress,
             t_str=params.get('t_str'),
         )
@@ -101,6 +103,7 @@ def run_job(params: Dict[str, Any], status_path: str) -> Dict[str, Any]:
         return write_status(
             status_path, state='done', progress=100, finished=time.time(),
             paths=res.paths, missing_chainage=res.missing_chainage,
+            isolation=res.isolation,
             checks=len(checks),
             check_summary=(checks.groupby('CHECK').size().to_dict() if len(checks) else {}),
         )

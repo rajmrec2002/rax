@@ -62,6 +62,8 @@ def cmd_run(c: RaxClient, a) -> int:
         a.lines = a.lines or int(s.get('BERTHING_LINES') or 1)
         a.criss_cross = a.criss_cross or s.get('CRISS_CROSS', '').upper() == 'YES'
         a.bands = a.bands or s.get('CC_BANDS', '')
+        if a.iso is None:
+            a.iso = (s.get('ISO_PREFERRED') or 'YES').upper()
         a.cc_min = a.cc_min if a.cc_min is not None else float(s.get('CC_MIN') or 0)
         a.cc_max = a.cc_max if a.cc_max is not None else float(s.get('CC_MAX') or 0)
         if s.get('VV_SQSH', '').upper() == 'YES':
@@ -77,7 +79,8 @@ def cmd_run(c: RaxClient, a) -> int:
     job = c.submit(a.toc, a.stn, hs, end, a.lines or 1, criss_cross=a.criss_cross,
                    chainage=a.chainage or '', vv=a.vv or '', bands=a.bands or '',
                    cc_min=a.cc_min or 0, cc_max=a.cc_max or 0,
-                   extra_chainage=_extra(a.add_chainage))
+                   extra_chainage=_extra(a.add_chainage),
+                   iso_preferred=(a.iso or 'YES').upper() != 'NO')
     print(f'Job {job["id"]} submitted to {c.base}')
     if a.no_wait:
         return 0
@@ -91,6 +94,13 @@ def cmd_run(c: RaxClient, a) -> int:
         print(f'WARNING: no chainage for {len(st["missing_chainage"])} signal(s)/point(s): '
               f'{", ".join(st["missing_chainage"])}\n  Pairs that need them stay locked. Fill in '
               'the CH-MISSING file (or use --add-chainage NAME=CH) and run again.', file=sys.stderr)
+    iso = st.get('isolation') or {}
+    if iso:
+        print(f'Isolation: {iso.get("isolated", 0)} pair(s) isolated '
+              f'({iso.get("iso points added", 0)} ISO point(s) added, '
+              f'{iso.get("conditional entries", 0)} conditional); '
+              f'{iso.get("not isolable", 0)} cannot be isolated; '
+              f'{iso.get("check layout", 0)} to check (see the ISO file)')
     if st.get('check_summary'):
         print('TOC-CHECK findings:')
         for k, n in st['check_summary'].items():
@@ -123,6 +133,8 @@ def main(argv=None) -> int:
     p.add_argument('--cc-min', type=float); p.add_argument('--cc-max', type=float)
     p.add_argument('--add-chainage', action='append', metavar='NAME=CH',
                    help='chainage missing from the file, e.g. S12=1234.5; repeatable')
+    p.add_argument('--iso', choices=['YES', 'NO', 'yes', 'no'], default=None,
+                   help='isolation preferred over dispensation (default YES)')
     p.add_argument('--out', help='folder for the outputs')
     p.add_argument('--no-wait', action='store_true', help='submit and return the job id')
 

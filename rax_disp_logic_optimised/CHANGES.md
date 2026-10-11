@@ -31,6 +31,12 @@
     01BT-139T-(139/140 R)-140T-141T-146T into S33→S45's route at point 146,
     401.89 m from S31. Within the set distance, 139/140N goes into the ISO
     of S33_39. S17_04M / CO21_01D needs no isolation (double overshoot).
+* **BERTH column** in the output TOC: each movement's berthing. A point
+  track circuit is never berthing; CO-named track circuits (CO46T, proved
+  for calling-on clearance) are not berthing; a list that ends on points
+  (out of order, e.g. GRF S22_JKCL1D) takes the berthing of the other
+  movements into the same post on the same line. Shunts into sidings have
+  none, as no conflicting movement can follow.
 * **Post-to-post rule in the locking too.** S, SH, A and CO from one post to
   the next post on the same line use the same track circuits and points.
   The TOC gives no track circuits for CO and no berthing for SH, by

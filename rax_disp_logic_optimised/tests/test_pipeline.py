@@ -134,3 +134,11 @@ def test_vv_square_sheet_round_trip(tmp_path):
     s1 = pd.read_excel(r1.paths['SQSH'], index_col=0).fillna('')
     s2 = pd.read_excel(r2.paths['SQSH'], index_col=0).fillna('')
     assert s1.equals(s2)
+
+
+def test_output_toc_has_berth_column(tmp_path):
+    for iso in (False, True):
+        res = run_dispensation(_write_toc(tmp_path), str(tmp_path), 'TST', NO_HS, NO_END, 18,
+                               iso_preferred=iso, t_str='T')
+        toc = pd.read_excel(res.paths['TOC'], dtype=str).fillna('')
+        assert 'BERTH' in toc.columns

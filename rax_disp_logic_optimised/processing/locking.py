@@ -62,9 +62,16 @@ def _tc_list(val) -> List[str]:
 
 
 def _berthing_of(tcs: List[str]) -> List[str]:
-    """Berthing = the last track circuits of a route with no point number ('01AT, 01BT')."""
+    """
+    Berthing = the last track circuits of a route with no point number
+    ('01AT, 01BT'; usually ascending in the DN direction).  A point track
+    circuit ends it.  Track circuits named after a calling-on signal
+    (CO46T: proved for calling-on clearance) are not berthing.
+    """
     out: List[str] = []
     for t in reversed(tcs):
+        if re.match(r'^CO\d', t):
+            continue
         if re.search(r'\d{3,}', t):
             break
         out.insert(0, t)
@@ -147,6 +154,31 @@ def co_track_circuits(toc: pd.DataFrame, col: str = 'RT-TC', need=None) -> pd.Se
                     full = own + [t for t in bt if t not in own]
             if full != own:
                 out[k] = ', '.join(full)
+    return pd.Series(out, index=toc.index, dtype=str)
+
+
+def berthing_track_circuits(toc: pd.DataFrame) -> pd.Series:
+    """
+    Berthing of each movement (in rear of its next stop signal post), as a
+    comma-separated string.  From the end of its RT-TC (post-to-post rule
+    applied); where that list ends on a point track circuit (out of order),
+    the berthing of the other movements into the same post on the same line.
+    Empty where none applies (e.g. shunts into sidings).
+    """
+    rt = co_track_circuits(toc)
+    pt = [post_key(t) for t in toc['TO'].astype(str).str.strip().str.upper()]
+    unk = [un_key(u) for u in toc['UN'].tolist()]
+    own = [_berthing_of(_tc_list(v)) for v in rt]
+    by_post_line: Dict[tuple, List[str]] = {}
+    for b, u, bt in zip(pt, unk, own):
+        if b and bt:
+            by_post_line.setdefault((b, u), bt)
+    out = []
+    for b, u, bt, v in zip(pt, unk, own, rt):
+        if not bt:
+            ref = by_post_line.get((b, u), [])
+            bt = [t for t in ref if t in _tc_list(v)]     # only if the route has them
+        out.append(', '.join(bt))
     return pd.Series(out, index=toc.index, dtype=str)
 
 

@@ -287,3 +287,10 @@ def test_shunt_ending_on_its_berthing_gets_nothing_added():
         dict(FROM='S38', TO='S22', UN='3', **{'RT-PT-N': '133/134N', 'RT-TC': '134T, 03AT, 03BT'}),
     ])
     assert co_track_circuits(toc).tolist()[0] == '3AT, 3BT'
+
+
+def test_berthing_excludes_point_and_calling_on_track_circuits():
+    from rax_disp_logic_optimised.processing.locking import _berthing_of
+    assert _berthing_of(['113T', '124T', '01AT', '01BT']) == ['01AT', '01BT']
+    assert _berthing_of(['46T', '56T', 'CO46T']) == ['46T', '56T']
+    assert _berthing_of(['JKCL1AT', 'JKCL1T', '109T', '106T']) == []     # ends on points

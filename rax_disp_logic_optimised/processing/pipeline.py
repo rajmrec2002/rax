@@ -22,7 +22,7 @@ from ..io.writers import write_table_file
 from .criss_cross import criss_cross_mvt, load_chainage, missing_chainage
 from .dispensation import disp_lit_fn
 from .isolation import apply_added_iso, find_isolation, isolated_pairs_sheet
-from .locking import ixl_fn
+from .locking import berthing_track_circuits, ixl_fn
 from .square_sheet import (
     new_disp_gen_frm_sqsh, new_lck_gen_frm_sqsh, re_vice_versa, sqsh_fn, vice_versa,
 )
@@ -290,6 +290,9 @@ def run_dispensation(
         checks.append(iso.checks.assign(SET='layout (isolation)'))
         res.paths['ISO'] = p('ISO')
         _write_iso_report(res.paths['ISO'], iso, ltoc, isolated_pairs_sheet(vvlsqsh, isolated))
+    # berthing of each movement (post-to-post rule), for checking
+    ltoc = ltoc.copy()
+    ltoc['BERTH'] = berthing_track_circuits(toc).values
     prog(20)
 
     def _documents(sqsh, sqsh_xx, suffix):

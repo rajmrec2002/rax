@@ -168,8 +168,14 @@ def _write_iso_report(path: str, iso, ltoc: pd.DataFrame, sqsh_iso: pd.DataFrame
         ('Pairs that cannot be isolated (keep dispensation)', iso.summary.get('not isolable', 0)),
         ('Pairs to check: track layout from TOC doubtful (keep dispensation)',
          iso.summary.get('check layout', 0)),
-        ('Pairs with no connection within %d track circuits' % 4, iso.summary.get('separated', 0)),
+        ('Pairs no single overshoot can bring together (double overshoot ignored)',
+         iso.summary.get('separated', 0)),
         ('', ''),
+        ('Rule', 'One train overshoots at a time. A movement with an overlap stays within '
+                 'it; one without (calling-on, shunt) runs on over unlocked points: facing '
+                 'points send it the way they lie, trailing points let it through. Isolation '
+                 'is needed where that reaches the other movement\'s route; reaching only its '
+                 'overlap would need both to overshoot (double overshoot) and is ignored.'),
         ('COND-ISO format', '#<point><N/R># with <movements> set = point locked in that position '
                             'only while this movement and one of those movements are both set'),
     ], columns=['ITEM', 'VALUE'])

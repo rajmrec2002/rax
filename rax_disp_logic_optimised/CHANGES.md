@@ -4,40 +4,47 @@
 
 * **New option 13 "Isolation (ISO) preferred over dispensation?"** (default
   YES) in the desktop app, the web page and `rax-client --iso YES|NO`.
-  For every pair of movements the locking allows together, the tool looks
-  for a connection between them (one's route or overlap to the other's)
-  through points neither route locks, and for points **outside both routes
-  and overlaps** that cut it (`processing/isolation.py`):
-  * points no other permitted movement needs the other way are **added to
-    ISO** of the movement (column ISO-ADDED says for which pair) and locked
-    like any ISO point;
-  * otherwise the point is locked **conditionally** – only while both
-    movements are set – in the new COND-ISO column:
-    `#121N# with S12_12, S14_14 set`;
-  * among the points that cut the connection, the one that locks the fewest
-    other movements is chosen (minimum repercussion), Normal before Reverse.
-  Isolated pairs are left out of the 3.47 / 5.16 dispensation.  Pairs that
-  cannot be isolated (the tracks join directly or only through points the
-  routes themselves lock) keep their dispensation.  Workbook
-  `STN_<stn>ISO-gen…xlsx`: SUMMARY, PAIRS (points, how locked, movements
-  newly locked, track-circuit connection), BY MOVEMENT, LAYOUT CHECK and the
-  square sheet with isolated pairs marked I.
+* **Single overshoot only** (`processing/isolation.py`): one train is
+  assumed to overshoot at a time; double overshoot is ignored, as for
+  criss-cross movements.
+  * A movement with an overlap stays within it (the overlap is its
+    overshoot allowance, and its points are locked).
+  * A movement without an overlap (calling-on, shunt) runs on past its
+    last signal over unlocked points: facing points send it the way they
+    lie, trailing points let it through to the toe. It crosses at most
+    one plain line track circuit and 6 track circuits in all (the TOC has
+    no lengths).
+  * Isolation is needed where that overshoot reaches the other
+    movement's **route**. Reaching only the other's overlap would need both
+    trains to overshoot, and is ignored.
+  * GRF example: CO21_01D overshooting S31 runs 01BT-139T-(139/140 R)-
+    140T-141T-146T into S33→S45's route, so 139/140N goes into the ISO of
+    S33_39. S17_04M / CO21_01D needs no isolation (double overshoot).
+* The isolation point is a facing point outside both routes and overlaps,
+  locked the other way. Where several cut every path, the one that locks
+  the fewest other movements is chosen, Normal first:
+  * nobody needs the other position: it is **added to ISO** (ISO-ADDED says
+    for which pair);
+  * otherwise it is **conditional**: COND-ISO `#139/140N# with S33_39 set`.
+
+  Isolated pairs are left out of the 3.47 / 5.16 dispensation. Pairs that
+  cannot be isolated (no free facing point on the overshoot path) keep it.
+  Workbook `STN_<stn>ISO-gen…xlsx`: SUMMARY, PAIRS (with the overshoot
+  path), BY MOVEMENT, LAYOUT CHECK, and the square sheet with isolated
+  pairs marked I.
 * The track layout is read from the TOC: RT-TC then OV-TC in running order,
-  with the route's point positions giving the leg.  Where a track circuit
-  would have more neighbours than it can have (2 + one per point end), the
-  order is reported in LAYOUT CHECK and pairs relying on it are listed as
-  "check layout" and keep their dispensation.  ADI: 1 such track circuit
-  (`581T/ALT`); GRF: 25 findings (e.g. SH17 routes list 109T last, S18/S20
-  swap 109T and 112T).
+  and the edge at a point used both Normal and Reverse is the toe.
+  Doubtful orders are listed in LAYOUT CHECK, and pairs relying on them
+  keep their dispensation (ADI: `581T/ALT`; GRF: e.g. the SH17 routes list
+  109T last, S18/S20 swap 109T and 112T, S38 lists 01AT before 01BT).
 * The ISO column in output TOCs keeps the R of a Reverse isolation point
-  (`147/148, 438R`); a point without a letter is Normal.  Before, N and R
+  (`147/148, 438R`); a point without a letter is Normal. Before, N and R
   were both dropped, so a Reverse ISO point read as Normal there and in the
   3.47 / 5.16 texts.
 * Corrected VV square sheet (option 08) could not read a square sheet saved
   by the tool: the route-name column was taken as data, so every cell was
-  compared with the wrong partner.  Fixed; a saved sheet fed back in now
+  compared with the wrong partner. Fixed; a saved sheet fed back in now
   gives the same result.
-
 
 ## 2.1.0 – Linux server, client install, chainage prompt
 

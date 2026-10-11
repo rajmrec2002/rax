@@ -65,20 +65,21 @@ the install command.
 
 ## Isolation preferred over dispensation (option 13, default YES)
 
-For each pair of movements the locking allows at the same time, the tool
-finds points outside both routes and overlaps that, set in the right
-position, stop a train on one from running onto the other. Isolated pairs need
-no 3.47 / 5.16 dispensation.
+Only one train is assumed to overshoot at a time; double overshoot is ignored.
+A movement with an overlap stays within it. One without an overlap (calling-on,
+shunt) runs on past its signal over unlocked points: facing points send it the
+way they lie, trailing points let it through.
 
-* If no other movement needs the point the other way, it is added to the
-  movement's **ISO** (see column ISO-ADDED).
-* If others do, it is locked only while both movements are set. This
-  conditional isolation goes in column **COND-ISO**:
-  `#121N# with S12_12 set`.
+Where that overshoot reaches another movement's **route**, the tool picks a
+facing point outside both routes and overlaps to lock the other way. It chooses
+the point that locks the fewest other movements:
 
-Details are in `STN_<stn>ISO-gen…xlsx`. The track layout is worked out from
-the TOC (track circuits in running order). Anything doubtful is listed in its
-LAYOUT CHECK sheet and left with its dispensation.
+* if no other movement needs it the other way, it is added to **ISO**;
+* otherwise it is locked conditionally, in column **COND-ISO**:
+  `#139/140N# with S33_39 set`.
+
+Isolated pairs need no 3.47 / 5.16 dispensation. Details, including each
+overshoot path, are in `STN_<stn>ISO-gen…xlsx`.
 
 ## Missing chainage
 

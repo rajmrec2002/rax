@@ -1,31 +1,48 @@
 """
 Isolation of simultaneous movements ("ISO preferred over dispensation").
 
-For every pair of movements that the locking allows at the same time,
-find whether a train on one can run onto the other's route or overlap
-through points that neither route locks.  If so, find the points outside
-both routes and overlaps that, locked in the right position, cut every
-such connection, choosing the points and positions that lock the fewest
-other movements (minimum repercussion):
+Single overshoot only
+---------------------
+Only one train is assumed to overshoot at a time; two trains overshooting
+together (double overshoot) is rare and is ignored, as for criss-cross
+movements.  The overshoot starts at the end of a movement (its last route
+track circuit) and runs on:
 
-* no other movement needs the opposite position  -> the point is added to
-  the route's ISO column (ordinary isolation locking);
-* otherwise -> conditional isolation: the point is locked only while both
-  movements are set, shown in the COND-ISO column as  #121N# with S12_12.
+* a movement with an overlap stays within it: the overlap is the
+  allowance for its overshoot and its points are locked;
+* a movement without an overlap (calling-on, shunt) runs on through
+  points that are not locked: over point track circuits (short) and into
+  at most one plain line track circuit (long), at most MAX_OVERSHOOT in all.
+  The TOC has no lengths, so this stands in for the overshoot distance.
+
+A pair needs isolation when one movement's overshoot reaches the other
+movement's ROUTE.  Reaching only the other's overlap would need that train
+to overshoot too (double overshoot) and is ignored.
+
+At a facing point the train goes the way the point lies, so a facing
+point outside both routes and overlaps, locked the other way, isolates the
+pair.  At a trailing point the train runs through to the toe whatever the
+point's position, so trailing points never isolate.
+
+Among the points that cut every such overshoot path, the one that locks
+the fewest other movements is chosen (minimum repercussion), Normal first:
+
+* no other permitted movement needs the opposite position -> added to the
+  ISO of the overshooting movement (ISO-ADDED column);
+* otherwise conditional isolation: locked only while both movements are
+  set (COND-ISO column):  #139/140N# with S33_39 set.
 
 Isolated pairs need no dispensation; pairs that cannot be isolated keep it.
 
 Track layout
 ------------
-Read from the TOC itself: RT-TC followed by OV-TC lists a route's track
-circuits in the order the train runs, and the route's point positions say
-which leg of each point it takes.  So two consecutive track circuits are
-neighbours, and the edge between a point's track circuit and the next one
-is a leg of that point if every route over it sets the point the same
-way.  A track circuit has two neighbours, plus one for each point end in
-it (a point adds a third leg); where the TOC implies more, the order is doubtful
-(listed in the layout check) and pairs that depend on it are reported for
-checking, not changed.
+Read from the TOC: RT-TC followed by OV-TC lists a route's track circuits
+in running order and the route's point positions say which leg of each
+point it uses.  At a point's track circuit the edge used with the point
+both Normal and Reverse is the toe; edges used only Normal / only Reverse
+are the legs.  A track circuit has two neighbours, plus one for each point
+end in it; where the TOC implies more, the order is doubtful (LAYOUT CHECK)
+and pairs that depend on it are reported for checking, not changed.
 """
 
 import itertools
@@ -33,18 +50,21 @@ import logging
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, FrozenSet, List, Set, Tuple
+from typing import Dict, FrozenSet, List, Optional, Set, Tuple
 
 import pandas as pd
 
 from ..core.constants import RE_TRACK_CIRCUIT
+from .locking import _has_alnum, co_track_circuits
 from .point_format import parse_iso
 
 logger = logging.getLogger(__name__)
 
-MAX_HOPS = 4            # track-circuit steps searched between two movements
-MAX_PATHS = 400         # per route, safety limit for the path search
+MAX_OVERSHOOT = 6       # track circuits a movement without overlap may overshoot ...
+MAX_PLAIN = 1           # ... of which plain (line) track circuits; point track
+                        # circuits are short, line track circuits long
 COND_MARK = '#'         # conditional isolation:  #121N# with S12_12
+MAX_ISO_POINTS = 3      # most isolation points tried for one pair
 
 _RE_PT = re.compile(r'(\d{1,4}(?:/\d{1,4})?)')
 _RE_POINT_TC = re.compile(r'^\d+(?:/\d+)*[A-Z]?T$')
@@ -68,10 +88,17 @@ def _points(val) -> List[str]:
 @dataclass
 class _Route:
     name: str
-    seq: List[str]                       # RT-TC + OV-TC in running order
-    zone: Set[str]                       # all track circuits the route occupies / locks
+    seq: List[str]                       # RT-TC + OV-TC in running order (as listed)
+    rt_seq: List[str]                    # route track circuits in order (CO: from S route)
+    rt: Set[str]                         # route track circuits
+    ov: Set[str]                         # overlap track circuits
+    has_ov: bool
     pos: Dict[str, str]                  # route + overlap points
     iso: Dict[str, str]                  # isolation points
+
+    @property
+    def zone(self) -> Set[str]:
+        return self.rt | self.ov
 
     @property
     def fixed(self) -> Dict[str, str]:
@@ -82,22 +109,26 @@ class _Route:
 
 @dataclass
 class Layout:
-    edges: Dict[Edge, int] = field(default_factory=dict)              # support (routes)
     adj: Dict[str, Set[str]] = field(default_factory=lambda: defaultdict(set))
-    ctrl: Dict[Edge, Dict[str, str]] = field(default_factory=dict)    # leg of point: position
-    doubtful: Set[str] = field(default_factory=set)                   # nodes with pruned edges
+    tc_pts: Dict[str, Set[str]] = field(default_factory=lambda: defaultdict(set))
+    role: Dict[Tuple[Edge, str], str] = field(default_factory=dict)   # (edge, point) -> toe/N/R
+    doubtful: Set[str] = field(default_factory=set)
     checks: List[tuple] = field(default_factory=list)
 
 
 def _routes(ltoc: pd.DataFrame) -> List[_Route]:
     out = []
-    for _, r in ltoc.iterrows():
+    has_ov = [_has_alnum(n) or _has_alnum(r)
+              for n, r in zip(ltoc['OV-PT-N'].fillna(''), ltoc['OV-PT-R'].fillna(''))]
+    rt_tc = co_track_circuits(ltoc, 'RT-TC')               # CO routes take their S route's
+    ov_tc = co_track_circuits(ltoc, 'OV-TC', need=has_ov)
+    for k, (_, r) in enumerate(ltoc.iterrows()):
         pos = {}
         for col, p in (('RT-PT-N', 'N'), ('RT-PT-R', 'R'), ('OV-PT-N', 'N'), ('OV-PT-R', 'R')):
             for pt in _points(r.get(col, '')):
                 pos[pt] = p
         if 'ISO-PT-N' in r.index or 'ISO-PT-R' in r.index:
-            # after locking the ISO column is shown without N/R; the
+            # after locking the ISO column may be shown without N; the
             # positions are in ISO-PT-N / ISO-PT-R
             iso = {}
             for col, p in (('ISO-PT-N', 'N'), ('ISO-PT-R', 'R')):
@@ -105,21 +136,24 @@ def _routes(ltoc: pd.DataFrame) -> List[_Route]:
                     iso[pt] = p
         else:
             iso = {pt: p for pt, p in parse_iso(r.get('ISO', ''))[0]}
+        rt_seq = _tcs(rt_tc.iat[k])
+        ov_seq = _tcs(ov_tc.iat[k])
         seq = _tcs(r.get('RT-TC', '')) + _tcs(r.get('OV-TC', ''))
-        zone = set(_tcs(r.get('TCK', ''))) | set(seq)
-        out.append(_Route(str(r['FROM-TO']), seq, zone, pos, iso))
+        rt = set(rt_seq)
+        ov = set(ov_seq) - rt
+        out.append(_Route(str(r['FROM-TO']), seq, rt_seq, rt, ov, bool(ov_seq) or has_ov[k],
+                          pos, iso))
     return out
 
 
 def build_layout(routes: List[_Route]) -> Layout:
     lay = Layout()
     all_pts = {p for r in routes for p in list(r.pos) + list(r.iso)}
-    tc_pts: Dict[str, Set[str]] = defaultdict(set)
     for r in routes:
         for tc in r.seq:
             if _RE_POINT_TC.match(tc):
                 nums = set(re.findall(r'\d+', tc))
-                tc_pts[tc] |= {p for p in all_pts if set(p.split('/')) & nums}
+                lay.tc_pts[tc] |= {p for p in all_pts if set(p.split('/')) & nums}
 
     support: Counter = Counter()
     seen: Dict[Tuple[Edge, str], Set[str]] = defaultdict(set)   # (edge, point) -> positions
@@ -131,7 +165,7 @@ def build_layout(routes: List[_Route]) -> Layout:
             e = frozenset((a, b))
             support[e] += 1
             who[e].append(r.name)
-            for p in tc_pts.get(a, set()) | tc_pts.get(b, set()):
+            for p in lay.tc_pts.get(a, set()) | lay.tc_pts.get(b, set()):
                 seen[(e, p)].add(r.pos.get(p, '?'))
 
     # prune impossible neighbour counts (out-of-order TC lists)
@@ -143,12 +177,11 @@ def build_layout(routes: List[_Route]) -> Layout:
     for node, ns in nbrs.items():
         # plain track: 2 neighbours; each point end in the track circuit adds a leg
         ends = len(set(re.findall(r'\d+', node))) if _RE_POINT_TC.match(node) else 0
-        limit = 2 + ends if ends else 2
+        limit = 2 + ends
         if len(ns) > limit:
-            ranked = sorted(ns, key=lambda n: -support[frozenset((node, n))])
+            ranked = sorted(ns, key=lambda n: (-support[frozenset((node, n))], n))
             keep_n = support[frozenset((node, ranked[limit - 1]))]
-            weak = [n for n in ranked[limit:]
-                    if support[frozenset((node, n))] < keep_n]
+            weak = [n for n in ranked[limit:] if support[frozenset((node, n))] < keep_n]
             if len(ranked) - len(weak) > limit:
                 weak = ranked[limit:]               # cannot rank: mark all extras
             lay.doubtful.add(node)
@@ -161,51 +194,79 @@ def build_layout(routes: List[_Route]) -> Layout:
                     f'{node} would have {len(ns)} neighbours ({", ".join(sorted(ns))}); '
                     f'{node}-{n} is given only by these routes; check RT-TC / OV-TC order'))
 
-    for e, n in support.items():
+    for e in support:
         if e in dropped:
             continue
-        lay.edges[e] = n
         a, b = tuple(e)
         lay.adj[a].add(b); lay.adj[b].add(a)
 
-    # a point is "known" at its track circuit if routes use it both ways there
-    both: Set[str] = set()
+    # role of each edge at a point: toe (used both ways) or the N / R leg.
+    # Only for points the TOC shows used both ways (else the legs are unknown).
+    both = {p for (_, p), s in seen.items() if {'N', 'R'} <= s}
     for (e, p), s in seen.items():
-        if {'N', 'R'} <= s:
-            both.add(p)
-    for e in lay.edges:
-        c = {}
-        for p in tc_pts.get(min(e), set()) | tc_pts.get(max(e), set()):
-            s = seen.get((e, p), set())
-            if len(s) == 1 and '?' not in s and p in both:
-                c[p] = next(iter(s))
-        if c:
-            lay.ctrl[e] = c
+        if e in dropped or p not in both or '?' in s:
+            continue
+        lay.role[(e, p)] = 'toe' if {'N', 'R'} <= s else next(iter(s))
     return lay
 
 
-def _route_paths(lay: Layout, r: _Route) -> Dict[str, List[Tuple[Edge, ...]]]:
-    """Paths of <= MAX_HOPS steps leaving r's zone, by end node."""
-    out: Dict[str, List[Tuple[Edge, ...]]] = defaultdict(list)
-    count = 0
-    stack = [(s, (), (s,)) for s in r.zone if s in lay.adj]
-    while stack and count < MAX_PATHS:
-        node, edges, nodes = stack.pop()
-        for nxt in lay.adj[node]:
-            if nxt in nodes or nxt in r.zone:
+def _transition(lay: Layout, node: str, prev: Optional[str], nxt: str,
+                fixed: Dict[str, str]) -> Tuple[bool, Tuple[Tuple[str, str], ...]]:
+    """
+    Can a train at `node`, having come from `prev`, run on to `nxt`?
+    Returns (possible, facing points it needs and their positions).
+    """
+    need = []
+    for p in lay.tc_pts.get(node, ()):
+        rin = lay.role.get((frozenset((prev, node)), p)) if prev else None
+        rout = lay.role.get((frozenset((node, nxt)), p))
+        if rin in ('N', 'R') and rout in ('N', 'R') and rin != rout:
+            return False, ()                        # leg to leg: not possible
+        facing = rout in ('N', 'R') and (rin == 'toe' or prev is None)
+        if facing:
+            if p in fixed:
+                if fixed[p] != rout:
+                    return False, ()                # point lies the other way
+            else:
+                need.append((p, rout))
+        # trailing (leg -> toe) runs through whatever the position
+    return True, tuple(need)
+
+
+def _overshoot_paths(lay: Layout, r: _Route) -> List[Tuple[Tuple[str, ...], Tuple]]:
+    """
+    Overshoot of movement r past its last signal: list of (track circuits
+    run over, facing points passed and the position each must lie in).
+    A movement with an overlap stays within its overlap (none listed).
+    """
+    if r.has_ov or len(r.rt_seq) < 2:
+        return []           # overlap = the overshoot; or running direction unknown
+    start = r.rt_seq[-1]
+    prev = r.rt_seq[-2]
+    out = []
+    stack = [(start, prev, (), (), 0)]
+    while stack:
+        node, came, nodes, need, plain = stack.pop()
+        for nxt in sorted(lay.adj.get(node, ())):
+            if nxt == came or nxt in nodes or nxt in r.rt:
                 continue
-            e = frozenset((node, nxt))
-            path = edges + (e,)
-            out[nxt].append(path)
-            count += 1
-            if len(path) < MAX_HOPS:
-                stack.append((nxt, path, nodes + (nxt,)))
+            p_n = plain + (0 if lay.tc_pts.get(nxt) else 1)
+            if p_n > MAX_PLAIN:
+                continue
+            ok, more = _transition(lay, node, came, nxt, r.fixed)
+            if not ok:
+                continue
+            path = nodes + (nxt,)
+            req = need + more
+            out.append((path, req))
+            if len(path) < MAX_OVERSHOOT:
+                stack.append((nxt, node, path, req, p_n))
     return out
 
 
 @dataclass
 class IsolationResult:
-    toc: pd.DataFrame                    # ISO updated, ISO-ADDED, COND-ISO columns
+    toc: pd.DataFrame                    # ISO-ADDED, COND-ISO columns
     report: pd.DataFrame                 # one row per pair that needed a decision
     isolated: Set[FrozenSet[str]]        # pairs that no longer need dispensation
     checks: pd.DataFrame
@@ -219,7 +280,6 @@ def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
     names = [r.name for r in routes]
     lay = build_layout(routes)
 
-    # permitted partners and who needs each point position
     permitted: Dict[str, Set[str]] = defaultdict(set)
     idx = set(sqsh.index)
     for a, b in itertools.combinations(names, 2):
@@ -231,8 +291,8 @@ def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
         for p, pos in r.fixed.items():
             need[(p, pos)].add(r.name)
 
-    paths = {r.name: _route_paths(lay, r) for r in routes}
-    reach = {n: set(paths[n]) for n in names}
+    paths = {r.name: _overshoot_paths(lay, r) for r in routes}
+    reach = {n: {pn for path, _ in paths[n] for pn in path} for n in names}
 
     added: Dict[str, Dict[str, str]] = defaultdict(dict)        # route -> {point: pos}
     added_why: Dict[str, Dict[str, Set[str]]] = defaultdict(lambda: defaultdict(set))
@@ -245,9 +305,6 @@ def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
         d = dict(added[r.name]); d.update(r.fixed)
         return d
 
-    def enabled(e: Edge, fx: Dict[str, str]) -> bool:
-        return all(fx.get(p, pos) == pos for p, pos in lay.ctrl.get(e, {}).items())
-
     def repercussion(rname: str, p: str, pos: str, other: str) -> Set[str]:
         return (permitted[rname] & need[(p, _opp(pos))]) - {other}
 
@@ -255,61 +312,50 @@ def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
         if b_name not in permitted[a_name]:
             continue
         A, B = by_name[a_name], by_name[b_name]
-        if not (reach[b_name] & A.zone) and not (reach[a_name] & B.zone):
+        if not (reach[a_name] & B.rt) and not (reach[b_name] & A.rt):
             stats['separated'] += 1
             continue
-        fa, fb = fixed(A), fixed(B)
-        if any(p in fb and fb[p] != pos for p, pos in fa.items()):
-            continue                                    # already conflicting points
-        fx = {**fb, **fa}
-        live = []
-        for src, dst in ((b_name, A), (a_name, B)):
-            for node in reach[src] & dst.zone:
-                for path in paths[src][node]:
-                    if (set().union(*path) - {node}) & dst.zone:
-                        continue            # reaches dst earlier on a shorter path
-                    if all(enabled(e, fx) for e in path):
-                        live.append(path)
+        fx = {**fixed(B), **fixed(A)}
+        live = []                                   # (overshooting movt, path, options)
+        for src, dst in ((A, B), (B, A)):
+            for path, req in paths[src.name]:
+                if path[-1] not in dst.rt or any(n in dst.rt for n in path[:-1]):
+                    continue                        # must first reach the other's ROUTE
+                if any(p in fx and fx[p] != pos for p, pos in req):
+                    continue                        # a facing point lies the other way
+                free = {p: pos for p, pos in req if p not in fx}   # facing points it needs
+                live.append((src.name, path, free))
         if not live:
             stats['separated'] += 1
             continue
-        doubtful = any(n in lay.doubtful for path in live for e in path for n in e)
-        route_pts = set(A.pos) | set(B.pos) | set(A.iso) | set(B.iso)
-        options = []
-        for path in live:
-            opts = set()
-            for e in path:
-                for p, pos in lay.ctrl.get(e, {}).items():
-                    if p not in route_pts:
-                        opts.add((p, _opp(pos)))
-            options.append(opts)
-        if any(not o for o in options):
-            via = ' - '.join(sorted({n for p, o in zip(live, options) if not o
-                                     for e in p for n in e}))
+        doubtful = any(n in lay.doubtful for _, path, _ in live for n in path)
+        if any(not o for _, _, o in live):
+            src, path, _ = next(x for x in live if not x[2])
+            ev = f'{src} overshoot: ' + '-'.join((by_name[src].rt_seq[-1],) + path)
             rows.append((a_name, b_name, 'not isolable', '', '', '',
-                         'connected through ' + via + ' with no free point to isolate'))
+                         ev + ' (no free facing point on the way)'))
             stats['not isolable'] += 1
             continue
 
-        # greedy cover: most paths cut, then least repercussion, Normal first
-        todo = list(range(len(live)))
-        chosen = []
-        while todo:
-            cand = Counter(o for i in todo for o in options[i])
+        chosen = _choose_points(live, lambda p, pos: min(
+            len(repercussion(a_name, p, pos, b_name)), len(repercussion(b_name, p, pos, a_name))))
+        if chosen is None:
+            ev = '; '.join(f'{s} overshoot: ' + '-'.join((by_name[s].rt_seq[-1],) + path)
+                           for s, path, _ in live[:3])
+            rows.append((a_name, b_name, 'not isolable', '', '', '',
+                         ev + ' (every setting of the free facing points leads onto the route)'))
+            stats['not isolable'] += 1
+            continue
 
-            def cost(o):
-                p, pos = o
-                return min(len(repercussion(a_name, p, pos, b_name)),
-                           len(repercussion(b_name, p, pos, a_name)))
-            best = min(cand, key=lambda o: (-cand[o], cost(o), o[1] != 'N', o[0]))
-            chosen.append(best)
-            todo = [i for i in todo if best not in options[i]]
-
+        over = {s for s, _, _ in live}
         parts, kinds, reps = [], [], []
         for p, pos in chosen:
             ra = repercussion(a_name, p, pos, b_name)
             rb = repercussion(b_name, p, pos, a_name)
-            owner, other, rep = (a_name, b_name, ra) if len(ra) <= len(rb) else (b_name, a_name, rb)
+            # least repercussion; on a tie the movement that overshoots
+            cands = [(len(ra), a_name not in over, a_name, b_name, ra),
+                     (len(rb), b_name not in over, b_name, a_name, rb)]
+            _, _, owner, other, rep = min(cands, key=lambda c: c[:3])
             if doubtful:
                 kinds.append('check layout')
             elif not rep:
@@ -326,7 +372,8 @@ def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
         if not doubtful:
             isolated.add(frozenset((a_name, b_name)))
         stats[status] += 1
-        evidence = '; '.join('-'.join(_order(p)) for p in live[:3])
+        evidence = '; '.join(f'{s} overshoot: ' + '-'.join((by_name[s].rt_seq[-1],) + path)
+                             for s, path, _ in live[:3])
         rows.append((a_name, b_name, status, ', '.join(parts), '; '.join(kinds),
                      ' | '.join(reps), evidence))
 
@@ -343,7 +390,7 @@ def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
 
     report = pd.DataFrame(rows, columns=['MOVT-1', 'MOVT-2', 'RESULT', 'ISOLATION POINTS',
                                          'LOCKED AS', 'MOVTS NEWLY LOCKED (repercussion)',
-                                         'CONNECTION (track circuits)'])
+                                         'OVERSHOOT PATH (track circuits)'])
     checks = pd.DataFrame(lay.checks, columns=['ROUTE', 'CHECK', 'DETAIL'])
     summary = dict(stats)
     summary['iso points added'] = sum(len(v) for v in added.values())
@@ -352,15 +399,29 @@ def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
     return IsolationResult(out, report, isolated, checks, summary)
 
 
-def _order(path: Tuple[Edge, ...]) -> List[str]:
-    """Edges -> node sequence for the report."""
-    if len(path) == 1:
-        return sorted(path[0])
-    seq = list(path[0] - path[1]) + list(path[0] & path[1])
-    for e in path[1:]:
-        nxt = list(e - {seq[-1]})
-        seq += nxt
-    return seq
+def _choose_points(live, cost) -> Optional[List[Tuple[str, str]]]:
+    """
+    Smallest set of (point, position) that cuts every overshoot path, each
+    point in one position only; among equal sizes the least repercussion,
+    then Normal before Reverse.  None if no set of <= MAX_ISO_POINTS works.
+    A path is cut when one of the facing points it needs lies the other way.
+    """
+    cands = sorted({(p, _opp(pos)) for _, _, free in live for p, pos in free.items()})
+    for k in range(1, MAX_ISO_POINTS + 1):
+        best = None
+        for combo in itertools.combinations(cands, k):
+            sel = dict(combo)
+            if len(sel) < k:
+                continue                            # same point in both positions
+            if all(any(p in sel and sel[p] != pos for p, pos in free.items())
+                   for _, _, free in live):
+                key = (sum(cost(p, pos) for p, pos in combo),
+                       sum(pos == 'R' for _, pos in combo), combo)
+                if best is None or key < best[0]:
+                    best = (key, list(combo))
+        if best:
+            return best[1]
+    return None
 
 
 def iso_text_with_added(iso_val: str, added: Dict[str, str]) -> str:

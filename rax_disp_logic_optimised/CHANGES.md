@@ -2,6 +2,12 @@
 
 ## 2.3.0 – update command, interactive setup
 
+* Dispensation texts write isolation points like route and overlap points:
+  `with isolation point/s (211/212N, 287/288N) & (275/276R)`, then
+  `& track/s (…)`. This includes the points added by the isolation search.
+  Before it was `with following isolation point/s (275/276R, 287/288)`,
+  copied from the ISO column, with the N dropped.
+
 * `bash setup.sh`: one-go interactive install / update / remove of server
   and client. It asks y/n and s/c questions, installs missing
   prerequisites, checks the port is free, confirms a summary, then runs

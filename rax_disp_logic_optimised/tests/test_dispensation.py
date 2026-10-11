@@ -57,9 +57,20 @@ def test_sub_movement_wording():
 
 def test_516_text_lists_isolation_points():
     sh16 = _texts().at['S16_16_0', 'SH-DISP-LIT']
-    assert 'with following isolation point/s (171, 173/174)' in sh16
+    # written like route / overlap points: Normal group, then Reverse group
+    assert 'with isolation point/s (171N, 173/174N)' in sh16
     assert 'SH40 to SH42 with route point/s (151/152N) and vice-versa' in sh16
     assert '()' not in sh16
+
+
+def test_isolation_points_grouped_normal_and_reverse():
+    import pandas as pd
+    from rax_disp_logic_optimised.processing.dispensation import iso_text
+    t = pd.DataFrame({'ISO-PT-N': ['211/212, 287/288', ''], 'ISO-PT-R': ['275/276', ''],
+                      'ISO-TC': ['142T', '']})
+    assert iso_text(t, 0) == (' with isolation point/s (211/212N, 287/288N) & (275/276R)'
+                              ' & track/s (142T)')
+    assert iso_text(t, 1) == ''
 
 
 def test_shunt_line_without_reverse_points_has_no_empty_brackets():

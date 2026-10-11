@@ -113,7 +113,7 @@ def disp_lit_fn(toc, disp, hs, end, l_no, sqsh_xx):
                               + " by taking off " + from_k
                               + " up to " + to_k)
 
-                    ss1 = ss2 = ss3 = 0
+                    ss1 = ss2 = 0
                     if (len(disp_mn_toc.at[row_idx, 'RT-PT-N']) > 1
                             or len(disp_mn_toc.at[row_idx, 'RT-PT-R']) > 1):
                         x2 = x2 + " with route point/s"
@@ -132,15 +132,7 @@ def disp_lit_fn(toc, disp, hs, end, l_no, sqsh_xx):
                                 x2 = x2 + " (" + disp_mn_toc.at[row_idx, 'OV-PT-N'] + ")"
                             if len(disp_mn_toc.at[row_idx, 'OV-PT-R']) > 1:
                                 x2 = x2 + (" & (" if ss2 else " (") + disp_mn_toc.at[row_idx, 'OV-PT-R'] + ")"
-                    iso_len = len(disp_mn_toc.at[row_idx, 'ISO'])
-                    iso_tc  = disp_iso_tc_fn(disp_mn_toc, 'ISO-TC', k)
-                    if iso_len > 1 or len(iso_tc) > 1:
-                        x2 = x2 + " with following isolation"
-                    if iso_len > 1:
-                        ss3 = 1
-                        x2 = x2 + " point/s (" + disp_mn_toc.at[row_idx, 'ISO'] + ")"
-                    if len(iso_tc) > 1:
-                        x2 = x2 + (" & track/s (" if ss3 else " track/s (") + iso_tc + ")"
+                    x2 = x2 + iso_text(disp_mn_toc, k)
                     if rd_k == 'received':
                         x2 = x2 + " and vice versa."
                     cond = str(sqsh_xx.loc[sqsh_i, sqsh_j]).strip()
@@ -168,7 +160,7 @@ def disp_lit_fn(toc, disp, hs, end, l_no, sqsh_xx):
                           + " by taking off " + toc.iloc[i, toc.columns.get_loc('FROM')]
                           + " up to " + toc.at[toc.index[i], 'TO'])
 
-                ss1 = ss2 = ss3 = 0
+                ss1 = ss2 = 0
                 if (len(toc.at[toc.index[i], 'RT-PT-N']) > 1
                         or len(toc.at[toc.index[i], 'RT-PT-R']) > 1):
                     x1 = x1 + " with route point/s"
@@ -187,15 +179,7 @@ def disp_lit_fn(toc, disp, hs, end, l_no, sqsh_xx):
                             x1 = x1 + " (" + toc.at[toc.index[i], 'OV-PT-N'] + ")"
                         if len(toc.at[toc.index[i], 'OV-PT-R']) > 1:
                             x1 = x1 + (" & (" if ss2 else " (") + toc.at[toc.index[i], 'OV-PT-R'] + ")"
-                iso_len_main = len(toc.at[toc.index[i], 'ISO'])
-                iso_tc_main  = disp_iso_tc_fn(toc, 'ISO-TC', i)
-                if iso_len_main > 1 or len(iso_tc_main) > 1:
-                    x1 = x1 + " and with isolation"
-                if iso_len_main > 1:
-                    ss3 = 1
-                    x1 = x1 + " point/s (" + toc.at[toc.index[i], 'ISO'] + ")"
-                if len(iso_tc_main) > 1:
-                    x1 = x1 + (", track/s (" if ss3 else " track/s (") + iso_tc_main + ")"
+                x1 = x1 + iso_text(toc, i)
                 x1 = x1 + ", the following simultaneous movements may be allowed::-\n"
 
             # ── 5.16 shunt text (x3) ─────────────────────────────────────
@@ -217,7 +201,7 @@ def disp_lit_fn(toc, disp, hs, end, l_no, sqsh_xx):
                           + " by taking off " + toc.at[toc.index[i], 'FROM']
                           + " up to " + toc.at[toc.index[i], 'TO'])
 
-                ss1 = ss2 = ss3 = 0
+                ss1 = ss2 = 0
                 if (len(toc.at[toc.index[i], 'RT-PT-N']) > 1
                         or len(toc.at[toc.index[i], 'RT-PT-R']) > 1):
                     x3 = x3 + " with route point/s"
@@ -236,15 +220,7 @@ def disp_lit_fn(toc, disp, hs, end, l_no, sqsh_xx):
                             x3 = x3 + " (" + toc.at[toc.index[i], 'OV-PT-N'] + ")"
                         if len(toc.at[toc.index[i], 'OV-PT-R']) > 1:
                             x3 = x3 + (" & (" if ss2 else " (") + toc.at[toc.index[i], 'OV-PT-R'] + ")"
-                iso_len_main = len(toc.at[toc.index[i], 'ISO'])
-                iso_tc_main  = disp_iso_tc_fn(toc, 'ISO-TC', i)
-                if iso_len_main > 1 or len(iso_tc_main) > 1:
-                    x3 = x3 + " with following isolation"
-                    if iso_len_main > 1:
-                        ss3 = 1
-                        x3 = x3 + " point/s (" + toc.at[toc.index[i], 'ISO'] + ")"
-                    if len(iso_tc_main) > 1:
-                        x3 = x3 + (", track/s (" if ss3 else " track/s (") + iso_tc_main + ")"
+                x3 = x3 + iso_text(toc, i)
                 x3 = x3 + ", the following shunting movements may be permitted ::-\n"
                 x3 = x3 + sh_mvt + "."
 
@@ -293,6 +269,28 @@ def disp_re_line(un: str, l_no: str) -> str:
         return f" for line No.- {l}" if l <= l_no else ""
     except ValueError:
         return ""
+
+
+def iso_text(toc: pd.DataFrame, i: int) -> str:
+    """
+    Isolation part of a movement text, written like the route and overlap
+    parts: ' with isolation point/s (211/212N, 287/288N) & (275/276R)',
+    then ' & track/s (142T)' for isolation track circuits.  '' if none.
+    """
+    def pts(col, pos):
+        if col not in toc.columns:
+            return []
+        val = str(toc.iloc[i, toc.columns.get_loc(col)])
+        return [p + pos for p in re.findall(r'\d{1,4}(?:/\d{1,4})?', val)]
+    n, r = pts('ISO-PT-N', 'N'), pts('ISO-PT-R', 'R')
+    tc = disp_iso_tc_fn(toc, 'ISO-TC', i).strip(' ,')
+    out = ''
+    if n or r:
+        out = ' with isolation point/s ' + ' & '.join(
+            '(' + ', '.join(g) + ')' for g in (n, r) if g)
+    if len(tc) > 1:
+        out += (' & track/s (' if out else ' with isolation track/s (') + tc + ')'
+    return out
 
 
 def disp_iso_tc_fn(toc: pd.DataFrame, iso_cl: str, i: int) -> str:

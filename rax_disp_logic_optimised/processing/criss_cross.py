@@ -17,6 +17,7 @@ from typing import Optional, Tuple
 
 from ..core.constants import CLEAN_PATTERNS, NR_PATTERNS
 from ..utils.patterns import safe_pattern
+from .point_format import iso_uncond
 from ..utils.logging_util import debug_print
 
 logger = logging.getLogger(__name__)
@@ -139,11 +140,11 @@ def _normalise_toc(toc: pd.DataFrame) -> pd.DataFrame:
     if 'ISO-PT-N' in toc.columns:
         toc['RT-PT-N'] = _merge_iso_pts(
             toc['RT-PT-N'],
-            toc['ISO-PT-N'].fillna('').astype(str).str.replace('nan', '', regex=False), '')
+            toc['ISO-PT-N'].map(iso_uncond), '')
     if 'ISO-PT-R' in toc.columns:
         toc['RT-PT-R'] = _merge_iso_pts(
             toc['RT-PT-R'],
-            toc['ISO-PT-R'].fillna('').astype(str).str.replace('nan', '', regex=False), '')
+            toc['ISO-PT-R'].map(iso_uncond), '')
     return toc
 
 
@@ -718,9 +719,10 @@ def criss_cross_mvt(
     total_pairs = l * (l + 1) // 2
 
     _empty = [''] * len(toc)
-    _iso_pt_n = (toc['ISO-PT-N'].fillna('').astype(str).tolist()
+    # only unconditional isolation points (conditional ones depend on a third movement)
+    _iso_pt_n = (toc['ISO-PT-N'].map(iso_uncond).tolist()
                  if 'ISO-PT-N' in toc.columns else _empty)
-    _iso_pt_r = (toc['ISO-PT-R'].fillna('').astype(str).tolist()
+    _iso_pt_r = (toc['ISO-PT-R'].map(iso_uncond).tolist()
                  if 'ISO-PT-R' in toc.columns else _empty)
     _iso_tc   = (toc['ISO-TC'].fillna('').astype(str).tolist()
                  if 'ISO-TC' in toc.columns else _empty)

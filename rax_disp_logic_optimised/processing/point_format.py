@@ -72,6 +72,43 @@ def parse_iso(val: str):
     return pts, tcs
 
 
+_RE_COND_ITEM = re.compile(r'#\s*(\d{1,4}(?:/\d{1,4})?)\s*#\s*(?:with\s+)?([^,#]*)')
+_RE_ANY_PT = re.compile(r'\d{1,4}(?:/\d{1,4})?')
+
+
+def iso_split(val):
+    """
+    ISO-PT-N / ISO-PT-R cell -> (unconditional points, conditional points).
+
+    '121, 111/112, #139/140# with S33_39+SH33_39'
+      -> (['121', '111/112'], {'139/140': ['S33_39', 'SH33_39']})
+
+    Unconditional points are always locked with the movement; a conditional
+    point only while one of the listed movements is set as well.
+    """
+    text = '' if val is None else str(val)
+    if text.lower() == 'nan':
+        text = ''
+    cond = {}
+    for pt, who in _RE_COND_ITEM.findall(text):
+        cond[pt] = [w for w in re.split(r'[+\s]+', who.strip()) if w and w.lower() != 'set']
+    plain = _RE_COND_ITEM.sub('', text)
+    uncond = [p for p in _RE_ANY_PT.findall(plain) if p not in cond]
+    return uncond, cond
+
+
+def iso_uncond(val) -> str:
+    """Only the unconditional points of an ISO-PT cell, as '121, 111/112'."""
+    return ', '.join(iso_split(val)[0])
+
+
+def iso_join(uncond, cond) -> str:
+    """(['121'], {'139/140': ['S33_39']}) -> '121, #139/140# with S33_39'."""
+    items = list(dict.fromkeys(uncond))
+    items += [f'#{p}# with ' + '+'.join(sorted(w)) for p, w in sorted(cond.items()) if p not in items]
+    return ', '.join(items)
+
+
 def iso_pt_format(toc: pd.DataFrame, pt_column: str) -> pd.Series:
     """
     Parse the ISO column into components:

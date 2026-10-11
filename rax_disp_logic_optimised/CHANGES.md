@@ -2,6 +2,21 @@
 
 ## 2.3.0 – update command, interactive setup
 
+* **All isolation points in ISO-PT-N / ISO-PT-R.** These columns hold the
+  TOC's ISO points, the ones added by the isolation search, and the
+  conditional ones with their condition:
+  `111/112, 121, #109/110# with S38_3+S46_3`. A conditional point is locked
+  only while one of the listed movements is set. Every function that reads
+  these columns uses only the unconditional points: the locking (pairwise
+  square sheet), criss-cross, the isolation search and the dispensation
+  texts. The COND-ISO column is replaced by this; ISO-ADDED still says
+  which points were added and for which pair. Helpers: `iso_split`,
+  `iso_uncond`, `iso_join` in processing/point_format.py.
+* Track circuits named after a calling-on signal that never appears in the
+  TO column (e.g. UJN CO5T, CO11T, proved for calling-on clearance) are left
+  out of the track layout used for isolation. They still count in the
+  locking.
+
 * Dispensation texts write isolation points like route and overlap points:
   `with isolation point/s (211/212N, 287/288N) & (275/276R)`, then
   `& track/s (…)`. This includes the points added by the isolation search.

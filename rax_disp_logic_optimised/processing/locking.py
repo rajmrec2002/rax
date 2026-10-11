@@ -10,7 +10,7 @@ import logging
 import pandas as pd
 from typing import List, Set, Dict
 
-from ..processing.point_format import pt_format, iso_pt_format
+from ..processing.point_format import iso_pt_format, iso_uncond, pt_format
 from ..processing.track_circuit import tc_format_fn
 from ..utils.patterns import build_token_index, build_exact_token_index
 from ..utils.text_cleaning import batch_split
@@ -242,8 +242,13 @@ def ixl_fn(xtoc: pd.DataFrame, hs, end, l_no) -> pd.DataFrame:
     rtptr_list = batch_split(toc['RT-PT-R'].astype(str).str.strip(strip), ', ')
     ovpn_list = batch_split(toc['OV-PT-N'].astype(str).str.strip(strip), ', ')
     ovpr_list = batch_split(toc['OV-PT-R'].astype(str).str.strip(strip), ', ')
-    isopn_list = batch_split(toc['ISO-PT-N'].astype(str).str.strip(strip), ', ')
-    isopr_list = batch_split(toc['ISO-PT-R'].astype(str).str.strip(strip), ', ')
+    # pairwise locking uses only the unconditional isolation points; a
+    # conditional one ('#139/140# with S33_39') applies only while that
+    # other movement is set as well
+    iso_n = toc['ISO-PT-N'].map(iso_uncond)
+    iso_r = toc['ISO-PT-R'].map(iso_uncond)
+    isopn_list = batch_split(iso_n.astype(str).str.strip(strip), ', ')
+    isopr_list = batch_split(iso_r.astype(str).str.strip(strip), ', ')
     tck_list = batch_split(toc['TCK'].astype(str).str.strip(strip), ', ')
     un_list = [un_key(u) for u in toc['UN'].tolist()]
     post_list = [post_key(f) for f in toc['FROM'].tolist()]
@@ -251,10 +256,10 @@ def ixl_fn(xtoc: pd.DataFrame, hs, end, l_no) -> pd.DataFrame:
     # ── Build reverse indexes for O(1) lookup ────────────────────────────
     ov_pt_r_idx = build_token_index(toc['OV-PT-R'])
     rt_pt_r_idx = build_token_index(toc['RT-PT-R'])
-    iso_pt_r_idx = build_token_index(toc['ISO-PT-R'])
+    iso_pt_r_idx = build_token_index(iso_r)
     rt_pt_n_idx = build_token_index(toc['RT-PT-N'])
     ov_pt_n_idx = build_token_index(toc['OV-PT-N'])
-    iso_pt_n_idx = build_token_index(toc['ISO-PT-N'])
+    iso_pt_n_idx = build_token_index(iso_n)
     tck_idx = build_exact_token_index(toc['TCK'])
     un_idx: Dict[str, Set[int]] = {}
     for idx, key in enumerate(un_list):

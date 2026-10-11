@@ -21,7 +21,9 @@ from ..io.preprocessor import detect_toc_format, read_formatted_toc, read_toc_fi
 from ..io.writers import write_table_file
 from .criss_cross import criss_cross_mvt, load_chainage, missing_chainage
 from .dispensation import disp_lit_fn
-from .isolation import apply_added_iso, find_isolation, isolated_pairs_sheet
+from .isolation import (
+    apply_added_iso, find_isolation, isolated_pairs_sheet, merge_conditional_iso,
+)
 from .locking import berthing_track_circuits, ixl_fn
 from .square_sheet import (
     new_disp_gen_frm_sqsh, new_lck_gen_frm_sqsh, re_vice_versa, sqsh_fn, vice_versa,
@@ -176,11 +178,14 @@ def _write_iso_report(path: str, iso, ltoc: pd.DataFrame, sqsh_iso: pd.DataFrame
                  'points send it the way they lie, trailing points let it through. Isolation '
                  'is needed where that reaches the other movement\'s route; reaching only its '
                  'overlap would need both to overshoot (double overshoot) and is ignored.'),
-        ('COND-ISO format', '#<point><N/R># with <movements> set = point locked in that position '
-                            'only while this movement and one of those movements are both set'),
+        ('ISO-PT-N / ISO-PT-R', 'all isolation points of the movement (TOC, added, conditional). '
+                                '#<point># with <movements> = conditional: locked in that position '
+                                'only while one of those movements is set as well'),
     ], columns=['ITEM', 'VALUE'])
-    by_movt = ltoc[['FROM-TO', 'ISO', 'ISO-ADDED', 'COND-ISO']]
-    by_movt = by_movt[(by_movt['ISO-ADDED'] != '') | (by_movt['COND-ISO'] != '')]
+    by_movt = ltoc[['FROM-TO', 'ISO', 'ISO-PT-N', 'ISO-PT-R', 'ISO-ADDED']]
+    by_movt = by_movt[(by_movt['ISO-ADDED'] != '')
+                      | by_movt['ISO-PT-N'].astype(str).str.contains('#')
+                      | by_movt['ISO-PT-R'].astype(str).str.contains('#')]
     with pd.ExcelWriter(path, engine='openpyxl') as xw:
         summary.to_excel(xw, sheet_name='SUMMARY', index=False)
         iso.report.to_excel(xw, sheet_name='PAIRS', index=False)
@@ -222,7 +227,9 @@ def run_dispensation(
     look for isolation points outside both routes and overlaps (see
     processing/isolation.py).  Isolated pairs are left out of the 3.47 /
     5.16 dispensation; points no other movement needs the other way are
-    added to ISO, the rest become conditional isolation (COND-ISO column).
+    added to ISO, the rest become conditional isolation.  ISO-PT-N /
+    ISO-PT-R then hold all isolation points, conditional ones written
+    '#139/140# with S33_39' (only applied while that movement is set).
     `iso_distance`: required minimum criss-cross distance (m) from the next
     stop signal to the point where an overshoot meets another route
     (measured with the chainage file; None = no limit).
@@ -276,15 +283,19 @@ def run_dispensation(
         if not vv_file and (iso.toc['ISO-ADDED'] != '').any():
             # lock the added isolation points like any other ISO entry
             before = _conflicts(vvlsqsh)
-            ltoc = ixl_fn(apply_added_iso(toc, iso), hs, end, l_no)
+            toc = apply_added_iso(toc, iso)         # also used by criss-cross below
+            ltoc = ixl_fn(toc, hs, end, l_no)
             vvlsqsh = vice_versa(sqsh_fn(ltoc, 'FROM-TO', 'NEW-LOCK'))
             write_table_file(vvlsqsh, res.paths['SQSH'], index=True)
             extra = _conflicts(vvlsqsh) - before
             if extra:
                 logger.warning('Isolation: %d pair(s) newly locked by added ISO points', len(extra))
-        cols = iso.toc.set_index('FROM-TO')[['ISO-ADDED', 'COND-ISO']]
-        ltoc = ltoc.join(cols, on='FROM-TO')
-        ltoc[['ISO-ADDED', 'COND-ISO']] = ltoc[['ISO-ADDED', 'COND-ISO']].fillna('')
+        # all isolation points in ISO-PT-N / ISO-PT-R, conditional ones with
+        # their condition ('#139/140# with S33_39'); ISO-ADDED says which
+        # unconditional ones the isolation search added and for which pair
+        ltoc = merge_conditional_iso(ltoc, iso)
+        ltoc = ltoc.join(iso.toc.set_index('FROM-TO')[['ISO-ADDED']], on='FROM-TO')
+        ltoc['ISO-ADDED'] = ltoc['ISO-ADDED'].fillna('')
         isolated = iso.isolated
         res.isolation = iso.summary
         checks.append(iso.checks.assign(SET='layout (isolation)'))

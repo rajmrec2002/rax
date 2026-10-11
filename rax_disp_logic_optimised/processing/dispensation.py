@@ -8,6 +8,8 @@ Generates human-readable movement descriptions for:
 """
 
 import re
+
+from .point_format import iso_split
 import logging
 import pandas as pd
 from typing import List
@@ -280,8 +282,10 @@ def iso_text(toc: pd.DataFrame, i: int) -> str:
     def pts(col, pos):
         if col not in toc.columns:
             return []
-        val = str(toc.iloc[i, toc.columns.get_loc(col)])
-        return [p + pos for p in re.findall(r'\d{1,4}(?:/\d{1,4})?', val)]
+        val = toc.iloc[i, toc.columns.get_loc(col)]
+        # unconditional points only: a conditional one ('#139/140# with S33_39')
+        # concerns a pair that is isolated, so never in a dispensation
+        return [p + pos for p in iso_split(val)[0]]
     n, r = pts('ISO-PT-N', 'N'), pts('ISO-PT-R', 'R')
     tc = disp_iso_tc_fn(toc, 'ISO-TC', i).strip(' ,')
     out = ''

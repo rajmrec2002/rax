@@ -35,7 +35,8 @@ the fewest other movements is chosen (minimum repercussion), Normal first:
 * no other permitted movement needs the opposite position -> added to the
   ISO of the overshooting movement (ISO-ADDED column);
 * otherwise conditional isolation: locked only while both movements are
-  set (COND-ISO column):  #139/140N# with S33_39 set.
+  set.  Merged into ISO-PT-N / ISO-PT-R with the condition:
+  '#139/140# with S33_39+SH33_39' (the pipeline does the merging).
 
 Isolated pairs need no dispensation; pairs that cannot be isolated keep it.
 
@@ -76,14 +77,13 @@ import pandas as pd
 
 from ..core.constants import RE_TRACK_CIRCUIT
 from .locking import _has_alnum, co_track_circuits, post_key
-from .point_format import parse_iso
+from .point_format import iso_join, iso_split, parse_iso
 
 logger = logging.getLogger(__name__)
 
 ISO_DISTANCE = 120.0    # default required distance (m), next stop signal -> criss-cross point
 MAX_CHAIN = 6           # safety limit on movements chained past the next stop signal
 ALT_LEG_TCS = 6         # track circuits followed to check the other leg of an isolation point
-COND_MARK = '#'         # conditional isolation:  #121N# with S12_12
 MAX_ISO_POINTS = 3      # most isolation points tried for one pair
 
 _RE_PT = re.compile(r'(\d{1,4}(?:/\d{1,4})?)')
@@ -157,6 +157,18 @@ def _routes(ltoc: pd.DataFrame) -> List[_Route]:
               for n, r in zip(ltoc['OV-PT-N'].fillna(''), ltoc['OV-PT-R'].fillna(''))]
     rt_tc = co_track_circuits(ltoc, 'RT-TC')               # CO routes take their S route's
     ov_tc = co_track_circuits(ltoc, 'OV-TC', need=has_ov)
+    # track circuits named after a calling-on signal that is never a TO
+    # signal (CO5T: proved for calling-on clearance) are not running track
+    to_sigs = {str(t).strip().upper() for t in ltoc['TO']}
+
+    def running(tcs: List[str]) -> List[str]:
+        out = []
+        for t in tcs:
+            m = re.match(r'^(CO\d+[A-Z]*)T$', t)
+            if m and m.group(1) not in to_sigs:
+                continue
+            out.append(t)
+        return out
     for k, (_, r) in enumerate(ltoc.iterrows()):
         pos, rt_pos = {}, {}
         for col, p in (('RT-PT-N', 'N'), ('RT-PT-R', 'R'), ('OV-PT-N', 'N'), ('OV-PT-R', 'R')):
@@ -169,13 +181,13 @@ def _routes(ltoc: pd.DataFrame) -> List[_Route]:
             # positions are in ISO-PT-N / ISO-PT-R
             iso = {}
             for col, p in (('ISO-PT-N', 'N'), ('ISO-PT-R', 'R')):
-                for pt in _points(r.get(col, '')):
+                for pt in iso_split(r.get(col, ''))[0]:      # unconditional only
                     iso[pt] = p
         else:
             iso = {pt: p for pt, p in parse_iso(r.get('ISO', ''))[0]}
-        rt_seq = _tcs(rt_tc.iat[k])
-        ov_seq = _tcs(ov_tc.iat[k])
-        seq = _tcs(r.get('RT-TC', '')) + _tcs(r.get('OV-TC', ''))
+        rt_seq = running(_tcs(rt_tc.iat[k]))
+        ov_seq = running(_tcs(ov_tc.iat[k]))
+        seq = running(_tcs(r.get('RT-TC', '')) + _tcs(r.get('OV-TC', '')))
         rt = set(rt_seq)
         ov = set(ov_seq) - rt
         out.append(_Route(str(r['FROM-TO']), str(r['FROM']).strip().upper(),
@@ -388,11 +400,13 @@ def _alt_leg_nodes(lay: Layout, p: str, pos: str, node: str, came: Optional[str]
 
 @dataclass
 class IsolationResult:
-    toc: pd.DataFrame                    # ISO-ADDED, COND-ISO columns
+    toc: pd.DataFrame                    # ISO-ADDED column
     report: pd.DataFrame                 # one row per pair that needed a decision
     isolated: Set[FrozenSet[str]]        # pairs that no longer need dispensation
     checks: pd.DataFrame
     summary: Dict[str, int]
+    # conditional isolation: movement -> {(point, position): other movements}
+    cond: Dict[str, Dict[Tuple[str, str], Set[str]]] = field(default_factory=dict)
 
 
 def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
@@ -583,15 +597,11 @@ def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
                      ' | '.join(reps), evidence))
 
     out = ltoc.copy()
-    iso_add, cond_col = [], []
+    iso_add = []
     for name in out['FROM-TO'].astype(str):
         iso_add.append(', '.join(f'{p}{pos} (for {", ".join(sorted(added_why[name][p + pos]))})'
                                  for p, pos in sorted(added[name].items())))
-        cond_col.append('; '.join(
-            f'{COND_MARK}{p}{pos}{COND_MARK} with {", ".join(sorted(others))} set'
-            for (p, pos), others in sorted(cond[name].items())))
     out['ISO-ADDED'] = iso_add
-    out['COND-ISO'] = cond_col
 
     report = pd.DataFrame(rows, columns=['MOVT-1', 'MOVT-2', 'RESULT', 'ISOLATION POINTS',
                                          'LOCKED AS', 'MOVTS NEWLY LOCKED (repercussion)',
@@ -601,7 +611,8 @@ def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
     summary['iso points added'] = sum(len(v) for v in added.values())
     summary['conditional entries'] = sum(len(v) for v in cond.values()) // 2
     logger.info('Isolation: %s', summary)
-    return IsolationResult(out, report, isolated, checks, summary)
+    return IsolationResult(out, report, isolated, checks, summary,
+                           {k: {pk: set(v) for pk, v in d.items()} for k, d in cond.items()})
 
 
 def _choose_points(live, cost) -> Optional[List[Tuple[str, str]]]:
@@ -652,6 +663,29 @@ def apply_added_iso(toc: pd.DataFrame, result: IsolationResult) -> pd.DataFrame:
     toc['ISO'] = [iso_text_with_added(iso, add.get(n, {}))
                   for n, iso in zip(toc['FROM-TO'], toc['ISO'])]
     return toc
+
+
+def merge_conditional_iso(ltoc: pd.DataFrame, result: IsolationResult) -> pd.DataFrame:
+    """
+    ISO-PT-N / ISO-PT-R with every isolation point of the movement: those of
+    the TOC, those added by the isolation search (already there after the
+    locking re-run) and the conditional ones with their condition:
+    '121, 111/112, #139/140# with S33_39+SH33_39'.
+    """
+    out = ltoc.copy()
+    for col in ('ISO-PT-N', 'ISO-PT-R'):
+        if col not in out.columns:
+            out[col] = ''
+    for k, name in enumerate(out['FROM-TO'].astype(str)):
+        for (p, pos), others in result.cond.get(name, {}).items():
+            col = 'ISO-PT-' + pos
+            j = out.columns.get_loc(col)
+            un, cond = iso_split(out.iat[k, j])
+            if p in un:
+                continue                    # already locked unconditionally
+            cond[p] = sorted(set(cond.get(p, [])) | set(others))
+            out.iat[k, j] = iso_join(un, cond)
+    return out
 
 
 def isolated_pairs_sheet(sqsh: pd.DataFrame, isolated: Set[FrozenSet[str]], mark: str = 'I'):

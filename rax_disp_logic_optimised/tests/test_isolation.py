@@ -1,4 +1,5 @@
 """Isolation points between simultaneous movements (single overshoot)."""
+import pandas as pd
 from helpers import make_toc
 from rax_disp_logic_optimised.processing.isolation import find_isolation
 from rax_disp_logic_optimised.processing.locking import ixl_fn
@@ -65,9 +66,8 @@ def test_conditional_isolation_when_another_movement_needs_the_point():
     row = _row(res, 'SH11_1', 'S22_2')
     assert row['RESULT'] == 'isolated' and row['LOCKED AS'] == 'conditional'
     assert 'S4_9' in row['MOVTS NEWLY LOCKED (repercussion)']
-    cond = dict(zip(res.toc['FROM-TO'], res.toc['COND-ISO']))
-    assert cond['SH11_1'] == '#101/102N# with S22_2 set'
-    assert cond['S22_2'] == '#101/102N# with SH11_1 set'
+    assert res.cond['SH11_1'] == {('101/102', 'N'): {'S22_2'}}
+    assert res.cond['S22_2'] == {('101/102', 'N'): {'SH11_1'}}
     assert (res.toc['ISO-ADDED'] == '').all()
 
 
@@ -154,9 +154,13 @@ def test_pipeline_iso_preferred_removes_isolated_pair_from_dispensation(tmp_path
     pairs, toc = _dsp_pairs(r1.paths['TOC'])
     assert pair not in pairs
     assert r1.isolation['isolated'] >= 1
-    cond = dict(zip(toc['FROM-TO'], toc['COND-ISO']))
-    assert cond['SH11_1'] == '#101/102N# with S22_2 set'
-    import pandas as pd
+    # conditional isolation merged into ISO-PT-N with its condition
+    isn = dict(zip(toc['FROM-TO'], toc['ISO-PT-N']))
+    assert isn['SH11_1'] == '#101/102# with S22_2'
+    assert isn['S22_2'] == '#101/102# with SH11_1'
+    # ... and it does not lock S4_9 (needs 101/102R) against the shunt
+    sq = pd.read_excel(r1.paths['SQSH'], index_col=0).fillna('')
+    assert sq.at['SH11_1', 'S4_9'] not in ('X', '~')
     assert set(pd.ExcelFile(r1.paths['ISO']).sheet_names) >= {'SUMMARY', 'PAIRS', 'BY MOVEMENT'}
 
 
@@ -230,3 +234,33 @@ def test_pair_covered_by_iso_added_for_another_pair_counts_as_isolated():
     assert first['RESULT'] == 'isolated' and first['LOCKED AS'] == 'ISO of S22_2'
     assert second['RESULT'] == 'isolated' and second['LOCKED AS'] == 'already in ISO of S22_2'
     assert frozenset(('A11_1', 'S22_2')) in res.isolated
+
+
+def test_conditional_iso_is_not_locked_pairwise_and_not_printed():
+    """Readers of ISO-PT-N / ISO-PT-R use only the unconditional points."""
+    import pandas as pd
+    from rax_disp_logic_optimised.processing.dispensation import iso_text
+    from rax_disp_logic_optimised.processing.point_format import iso_split, iso_uncond
+    cell = '121, #101/102# with S22_2+S24_4'
+    assert iso_uncond(cell) == '121'
+    assert iso_split(cell) == (['121'], {'101/102': ['S22_2', 'S24_4']})
+    t = pd.DataFrame({'ISO-PT-N': [cell], 'ISO-PT-R': [''], 'ISO-TC': ['']})
+    assert iso_text(t, 0) == ' with isolation point/s (121N)'
+    # the locking ignores the conditional point
+    toc = toc_format(make_toc(LAYOUT + [dict(A, ISO=''), B, X]), NO_HS, NO_END, 18)
+    toc['ISO-PT-N'] = ['', '', '', '', '', '#101/102# with S22_2', '', '']
+    ltoc = ixl_fn(toc, NO_HS, NO_END, 18)
+    vv = vice_versa(sqsh_fn(ltoc, 'FROM-TO', 'NEW-LOCK'))
+    assert vv.at['SH11_1', 'S4_9'] not in ('X', '~')
+
+
+def test_track_circuit_of_calling_on_signal_is_not_running_track():
+    from rax_disp_logic_optimised.processing.isolation import _routes
+    rows = [dict(FROM='S5', TO='S11', UN='1', **{'RT-PT-N': '205/206N', 'RT-TC': '205T, CO5T, 01AT'}),
+            dict(FROM='CO5', TO='S11', UN='1', **{'RT-PT-N': '205/206N'}),
+            dict(FROM='S7', TO='CO9', UN='2', **{'RT-TC': '207T, CO9T'})]     # CO9 is a TO signal
+    _, ltoc = _run(rows)
+    r = {x.name: x for x in _routes(ltoc)}
+    assert r['S5_1'].rt_seq == ['205T', '01AT']
+    assert r['CO5_1'].rt_seq == ['205T', '01AT']
+    assert r['S7_2'].rt_seq == ['207T', 'CO9T']

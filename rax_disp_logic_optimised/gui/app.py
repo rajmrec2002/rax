@@ -377,7 +377,7 @@ class RaxLogicApp(QMainWindow):
             'outside both routes and overlaps that isolate them. Isolated pairs are left\n'
             'out of the 3.47 / 5.16 dispensation; points no other movement needs the\n'
             'other way are added to ISO, the rest become conditional isolation\n'
-            '(COND-ISO column, e.g. #121N# with S12_12 set). See the ISO output file.')
+            '(in ISO-PT-N / ISO-PT-R, e.g. #139/140# with S33_39). See the ISO output file.')
         g.addWidget(self.cb_iso, 10, 2, 1, 2)
 
         g.addWidget(self._num_lbl('14'), 11, 0)

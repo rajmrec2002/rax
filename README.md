@@ -8,14 +8,14 @@ You can use it three ways:
 | Use | Install | Runs the job on |
 |---|---|---|
 | Desktop app | `deploy/install.sh client` (Linux) or `pip install ".[gui]"` (Windows) | this PC, or a server if "Run on server" is filled in |
-| Web browser | nothing – open `http://<server>:8080/` | the server |
+| Web browser | nothing – open `http://<server>:8765/` | the server |
 | Command line | `deploy/install.sh client --cli-only` | the server |
 
 ## Server (Linux, systemd)
 
 ```bash
 git clone <repo> rax && cd rax
-sudo ./deploy/install.sh server --port 8080 --workers 2
+sudo ./deploy/install.sh server --port 8765 --workers 2
 ```
 
 This creates the `rax` user and installs into `/opt/rax-logic/venv`. Settings go
@@ -34,7 +34,7 @@ Clients need the token. Use `--no-token` only on a closed network.
 ## Client
 
 ```bash
-./deploy/install.sh client --server http://10.0.0.5:8080 --token <token>
+./deploy/install.sh client --server http://10.0.0.5:8765 --token <token>
 ```
 
 This installs the desktop app (applications menu → *Rax Logic*, or `rax-logic`)
@@ -83,6 +83,6 @@ app no longer leaves gaps silently:
 ```bash
 pip install -e ".[all]"
 make test          # 49 tests
-make server        # http://127.0.0.1:8080
+make server        # http://127.0.0.1:8765
 make run           # desktop app
 ```

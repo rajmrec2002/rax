@@ -2,11 +2,11 @@
 # Rax Logic installer for Linux.
 #
 #   Server (needs root; runs as a systemd service):
-#     sudo ./deploy/install.sh server [--port 8080] [--workers 2] [--token TOKEN | --no-token]
+#     sudo bash deploy/install.sh server [--port 8765] [--workers 2] [--token TOKEN | --no-token]
 #                                     [--bind 0.0.0.0] [--wheelhouse DIR]
 #
 #   Client (normal user; no root):
-#     ./deploy/install.sh client [--cli-only] [--server http://host:8080] [--token TOKEN]
+#     ./deploy/install.sh client [--cli-only] [--server http://host:8765] [--token TOKEN]
 #                                [--wheelhouse DIR]
 #       default: desktop app (PySide6) + rax-client command
 #       --cli-only: rax-client command only (no pandas / PySide6)
@@ -46,9 +46,35 @@ pip_install() {   # venv_dir  spec...
   "$venv/bin/python" -m pip install --upgrade "${opts[@]}" "$@"
 }
 
+port_busy() {      # port -> 0 if something is listening on it
+  if command -v ss >/dev/null; then
+    ss -Hltn "sport = :$1" 2>/dev/null | grep -q .
+  else
+    "$PY" - "$1" <<'PYEOF'
+import socket, sys
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    s.bind(('0.0.0.0', int(sys.argv[1])))
+except OSError:
+    sys.exit(0)
+sys.exit(1)
+PYEOF
+  fi
+}
+
+port_owner() {     # show which program uses the port (best effort)
+  if command -v ss >/dev/null; then ss -Hltnp "sport = :$1" 2>/dev/null | sed 's/^/    /'; fi
+}
+
+free_port() {      # first free port from 8765 up
+  local p
+  for p in $(seq 8765 8799); do port_busy "$p" || { echo "$p"; return; }; done
+  echo 9765
+}
+
 # ── server ───────────────────────────────────────────────────────────────────
 install_server() {
-  local port=8080 workers=2 bind=0.0.0.0 token="" no_token=0
+  local port="" workers=2 bind=0.0.0.0 token="" no_token=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --port) port="$2"; shift 2 ;;
@@ -64,6 +90,20 @@ install_server() {
   command -v systemctl >/dev/null || die "systemd not found."
   need_python
 
+  # Port: --port, else the one already configured, else 8765.  It must not be
+  # taken by another program (e.g. another dashboard on 8080).
+  local configured=""
+  [[ -f "$ETC/server.env" ]] && configured="$(sed -n 's/^RAX_PORT=//p' "$ETC/server.env" | tail -1)"
+  port="${port:-${configured:-8765}}"
+  [[ "$port" =~ ^[0-9]+$ && "$port" -ge 1 && "$port" -le 65535 ]] || die "--port must be a number 1-65535"
+  systemctl stop rax-logic 2>/dev/null || true      # so our own old instance does not count as "busy"
+  if port_busy "$port"; then
+    echo "ERROR: port $port is already used by another program:" >&2
+    port_owner "$port" >&2
+    echo "Choose a free port, e.g.:  sudo bash $0 server --port $(free_port)" >&2
+    exit 1
+  fi
+
   say "Creating user 'rax' and folders"
   id rax >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --shell /usr/sbin/nologin rax
   mkdir -p "$PREFIX" "$DATA" "$ETC"
@@ -74,7 +114,12 @@ install_server() {
   pip_install "$PREFIX/venv" "$SRC[server,fast]"
 
   if [[ -f "$ETC/server.env" ]]; then
-    say "Keeping existing $ETC/server.env"
+    say "Keeping existing $ETC/server.env (port set to $port)"
+    if grep -q '^RAX_PORT=' "$ETC/server.env"; then
+      sed -i "s/^RAX_PORT=.*/RAX_PORT=$port/" "$ETC/server.env"
+    else
+      echo "RAX_PORT=$port" >> "$ETC/server.env"
+    fi
   else
     if [[ $no_token -eq 0 && -z "$token" ]]; then
       token="$("$PY" -c 'import secrets; print(secrets.token_urlsafe(24))')"

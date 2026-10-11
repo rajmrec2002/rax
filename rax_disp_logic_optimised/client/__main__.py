@@ -1,7 +1,7 @@
 """
 rax-client: run dispensation on a Rax Logic server from the command line.
 
-    rax-client config --server http://server:8080 --token XXXX
+    rax-client config --server http://server:8765 --token XXXX
     rax-client health
     rax-client run --settings ~/.rax-logic/ADI_20261011_101500.txt --out ./ADI_out
     rax-client run --toc ADI_TOC.xlsx --stn ADI --hs "S5,CO5=VIRAR" --hs "S6,S8=SBI" \\
@@ -100,7 +100,7 @@ def cmd_run(c: RaxClient, a) -> int:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog='rax-client', description='Rax Logic server client')
-    ap.add_argument('--server', help='server address, e.g. http://10.0.0.5:8080 '
+    ap.add_argument('--server', help='server address, e.g. http://10.0.0.5:8765 '
                                      '(default: ~/.rax-logic/client.conf or $RAX_SERVER)')
     ap.add_argument('--token', help='login token (default: client.conf or $RAX_TOKEN)')
     sub = ap.add_subparsers(dest='cmd', required=True)

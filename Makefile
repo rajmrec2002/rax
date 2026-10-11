@@ -7,7 +7,7 @@ run-debug:
 	python3 -m rax_disp_logic_optimised.cli.main --debug
 
 server:
-	python3 -m rax_disp_logic_optimised.server --host 127.0.0.1 --port 8080
+	python3 -m rax_disp_logic_optimised.server --host 127.0.0.1 --port 8765
 
 lint:
 	ruff check rax_disp_logic_optimised/

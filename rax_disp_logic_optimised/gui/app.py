@@ -439,7 +439,7 @@ class RaxLogicApp(QMainWindow):
         sl.addWidget(QLabel('Run on server'))
         self.e_server = QLineEdit()
         self.e_server.setPlaceholderText(
-            'blank = run on this computer;  or e.g. http://10.0.0.5:8080')
+            'blank = run on this computer;  or e.g. http://10.0.0.5:8765')
         self.e_server.setToolTip(
             'Address of a Rax Logic server. The TOC, chainage and VV files are uploaded,\n'
             'the job runs on the server and the outputs are saved in the folder of field 02.\n'

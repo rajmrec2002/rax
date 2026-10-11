@@ -2,7 +2,7 @@
 Talk to a Rax Logic server.  Standard library only, so the client
 install needs nothing beyond Python (pandas only for the desktop app).
 
-    c = RaxClient('http://server:8080', token='...')
+    c = RaxClient('http://server:8765', token='...')
     job = c.submit('TOC.xlsx', stn='ADI', hs=['S5,CO5', ...], end=['VIRAR', ...],
                    l_no=18, criss_cross=True, chainage='CH.xlsx', bands='0-120, 300+')
     job = c.wait(job['id'], on_progress=print)
@@ -82,7 +82,7 @@ class RaxClient:
         cfg = load_client_config()
         base_url = base_url or cfg.get('SERVER_URL', '')
         if not base_url:
-            raise ServerError('No server address. Use --server http://host:8080, '
+            raise ServerError('No server address. Use --server http://host:8765, '
                               'set RAX_SERVER, or run:  rax-client config --server URL')
         if '://' not in base_url:
             base_url = 'http://' + base_url

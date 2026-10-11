@@ -16,7 +16,7 @@ def _env(name: str, default: str) -> str:
 @dataclass
 class ServerConfig:
     host: str = _env('RAX_HOST', '0.0.0.0')
-    port: int = int(_env('RAX_PORT', '8080'))
+    port: int = int(_env('RAX_PORT', '8765'))
     data_dir: str = _env('RAX_DATA_DIR', os.path.expanduser('~/.rax-logic/server'))
     workers: int = int(_env('RAX_WORKERS', '2'))           # jobs run at the same time
     token: str = _env('RAX_TOKEN', '')                     # '' = no login needed

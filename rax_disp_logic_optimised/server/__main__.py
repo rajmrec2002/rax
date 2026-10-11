@@ -1,7 +1,7 @@
 """
 rax-server: run the Rax Logic web server.
 
-    rax-server --port 8080 --data-dir /var/lib/rax-logic --workers 2
+    rax-server --port 8765 --data-dir /var/lib/rax-logic --workers 2
 """
 
 import argparse
@@ -45,6 +45,15 @@ def main(argv=None) -> None:
                        workers=max(1, a.workers), token=a.token,
                        max_upload_mb=a.max_upload_mb, keep_days=a.keep_days)
     os.makedirs(cfg.jobs_dir, exist_ok=True)
+    import socket
+    with socket.socket() as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind((cfg.host, cfg.port))
+        except OSError:
+            sys.exit(f'Port {cfg.port} is already used by another program (another dashboard?). '
+                     f'Start with --port <free port>, or set RAX_PORT in '
+                     f'/etc/rax-logic/server.env and run: sudo systemctl restart rax-logic')
     if cfg.host not in ('127.0.0.1', 'localhost') and not cfg.token:
         logging.warning('No login token set: anyone who can reach port %d can run jobs '
                         'and download outputs.  Set RAX_TOKEN or --token.', cfg.port)

@@ -1,6 +1,14 @@
 # Changes
 
-## 2.3.0 – update command
+## 2.3.0 – update command, interactive setup
+
+* `bash setup.sh`: one-go interactive install / update / remove of server
+  and client. It asks y/n and s/c questions, installs missing
+  prerequisites, checks the port is free, confirms a summary, then runs
+  deploy/install.sh.
+* Fixed: adding the update command had dropped the installer's
+  port-checking functions, so a busy port (e.g. another dashboard on 8080)
+  was no longer refused. Restored.
 
 * `sudo bash deploy/install.sh update` (server) / `bash deploy/install.sh
   update` (client) pulls the latest code, reinstalls and restarts the

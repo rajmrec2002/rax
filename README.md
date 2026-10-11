@@ -11,6 +11,27 @@ You can use it three ways:
 | Web browser | nothing – open `http://<server>:8765/` | the server |
 | Command line | `deploy/install.sh client --cli-only` | the server |
 
+## Easiest: interactive setup
+
+```bash
+bash setup.sh
+```
+
+The script asks what to do and confirms before it starts:
+* **i**nstall, **u**pdate or **r**emove;
+* **s**erver, **c**lient or **b**oth;
+* for a client, **d**esktop app or **c**ommand line only;
+* port (it checks the port is free, e.g. not your other dashboard on 8080),
+  jobs at a time, login token, server address, offline wheel folder.
+
+It installs missing prerequisites (python3, python3-venv, the Qt libraries
+for the desktop app, git) after asking y/n. It shows a summary to confirm,
+then runs `deploy/install.sh`. Press Enter to take the default in
+[brackets].
+
+Copied on its own to a new machine, `setup.sh` offers to download the code
+with git. Run it as your normal user: it uses sudo only for the server parts.
+
 ## Server (Linux, systemd)
 
 ```bash

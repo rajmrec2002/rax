@@ -117,6 +117,32 @@ update() {
   say "Update done."
 }
 
+port_busy() {      # port -> 0 if something is listening on it
+  if command -v ss >/dev/null; then
+    ss -Hltn "sport = :$1" 2>/dev/null | grep -q .
+  else
+    "$PY" - "$1" <<'PYEOF'
+import socket, sys
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+try:
+    s.bind(('0.0.0.0', int(sys.argv[1])))
+except OSError:
+    sys.exit(0)
+sys.exit(1)
+PYEOF
+  fi
+}
+
+port_owner() {     # show which program uses the port (best effort)
+  if command -v ss >/dev/null; then ss -Hltnp "sport = :$1" 2>/dev/null | sed 's/^/    /'; fi
+}
+
+free_port() {      # first free port from 8765 up
+  local p
+  for p in $(seq 8765 8799); do port_busy "$p" || { echo "$p"; return; }; done
+  echo 9765
+}
+
 # ── server ───────────────────────────────────────────────────────────────────
 install_server() {
   local port="" workers=2 bind=0.0.0.0 token="" no_token=0

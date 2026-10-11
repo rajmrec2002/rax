@@ -118,6 +118,57 @@ def _missing_chainage(toc: pd.DataFrame, ch_df: pd.DataFrame) -> list:
     return sorted(k for k in keys if math.isnan(_resolve_ch(ch_df, k, cache)))
 
 
+def _normalise_toc(toc: pd.DataFrame) -> pd.DataFrame:
+    """Copy of the formatted TOC with names and point lists cleaned for criss-cross."""
+    toc = toc.copy()
+    for col in ['FROM', 'TO', 'GN', 'RT-TC', 'OV-TC',
+                'RT-PT-N', 'RT-PT-R', 'OV-PT-N', 'OV-PT-R',
+                'ISO', 'ISO-TC', 'UN', 'OV-SET', 'DIR']:
+        if col in toc.columns:
+            toc[col] = toc[col].astype(str).replace('nan', '')
+
+    rm_pat = r'[ \.\-\n#@\*\?\^\$\(\)]'
+    nr_pat = '|'.join(NR_PATTERNS) if NR_PATTERNS else r'\bN\b|\bR\b'
+    for col in ['FROM', 'TO', 'GN', 'RT-TC', 'OV-TC',
+                'RT-PT-N', 'RT-PT-R', 'OV-PT-N', 'OV-PT-R', 'ISO', 'UN']:
+        if col in toc.columns:
+            toc[col] = toc[col].str.replace(rm_pat, '', regex=True)
+            if 'PT' in col or col == 'ISO':
+                toc[col] = toc[col].str.replace(nr_pat, '', regex=True)
+
+    if 'ISO-PT-N' in toc.columns:
+        toc['RT-PT-N'] = _merge_iso_pts(
+            toc['RT-PT-N'],
+            toc['ISO-PT-N'].fillna('').astype(str).str.replace('nan', '', regex=False), '')
+    if 'ISO-PT-R' in toc.columns:
+        toc['RT-PT-R'] = _merge_iso_pts(
+            toc['RT-PT-R'],
+            toc['ISO-PT-R'].fillna('').astype(str).str.replace('nan', '', regex=False), '')
+    return toc
+
+
+def load_chainage(path_ch: str) -> pd.DataFrame:
+    """Chainage file -> DataFrame GR_NO / GR_CH (blank or text chainage = NaN = missing)."""
+    from ..io.readers import read_chainage_file
+    if path_ch and os.path.isfile(str(path_ch).strip()):
+        ch = read_chainage_file(path_ch).fillna('')
+    else:
+        ch = pd.DataFrame(columns=['GR_NO', 'GR_CH'])
+    ch['GR_CH'] = pd.to_numeric(ch['GR_CH'], errors='coerce')
+    ch['GR_NO'] = ch['GR_NO'].astype(str).str.strip()
+    return ch
+
+
+def missing_chainage(toc: pd.DataFrame, path_ch: str) -> list:
+    """
+    Signals ('S12', 'SH5' …) and points ('PT101' …) used by the formatted
+    TOC that have no chainage in `path_ch` (all of them if no file).
+    Pairs that need one of these cannot be given a criss-cross distance
+    and stay locked.
+    """
+    return _missing_chainage(_normalise_toc(toc), load_chainage(path_ch))
+
+
 def _pt_protecting_tc(point_str: str, from_sig: str) -> Optional[str]:
     parts = [p.strip().rstrip('T') for p in str(point_str).split('/')]
     if not parts[0]:
@@ -180,8 +231,9 @@ def tomvt(toc, to, ovptn, ovptr, yx_rtptn, yx_ovptn, dir, iso_ptn,
         for p in rm + ['\n']:
             xtoc[col] = xtoc[col].str.replace(p, '', regex=True)
 
-    def _su(s): return list(set(t for t in ','.join(s.astype(str).tolist()).split(',') if t))
-    return ([list(set(xtoc['TO'].tolist()))]
+    # sorted, so the same point is named on every run (set order varies per process)
+    def _su(s): return sorted(set(t for t in ','.join(s.astype(str).tolist()).split(',') if t))
+    return ([sorted(set(xtoc['TO'].tolist()))]
             + [_su(xtoc[c]) for c in ['RT-PT-N', 'RT-PT-R', 'OV-PT-N', 'OV-PT-R', 'RT-TC']]
             ) or [[''], [''], [''], [''], [''], ['']]
 
@@ -221,8 +273,9 @@ def to_2mvt(toc, xto, rtptn, rtptr, ovptn, ovptr, dir, yf,
             xtoc[col] = xtoc[col].str.replace(p, '', regex=True)
         xtoc[col] = xtoc[col].str.replace('\n', ',', regex=True)
 
-    def _su(s): return list(set(t for t in ','.join(s.astype(str).tolist()).split(',') if t))
-    return ([list(set(xtoc['TO'].tolist()))]
+    # sorted, so the same point is named on every run (set order varies per process)
+    def _su(s): return sorted(set(t for t in ','.join(s.astype(str).tolist()).split(',') if t))
+    return ([sorted(set(xtoc['TO'].tolist()))]
             + [_su(xtoc[c]) for c in ['RT-PT-N', 'RT-PT-R', 'OV-PT-N', 'OV-PT-R', 'RT-TC']])
 
 
@@ -642,47 +695,10 @@ def criss_cross_mvt(
     progress_cb=None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Compute criss-cross movements. Uses fork-Pool on Linux for speed."""
-    from ..io.readers import read_chainage_file
-    from ..io.writers import write_table_file
-
     cc_dist_min = float(cc_dist_min)
     cc_dist_max = float(cc_dist_max)
-    toc = toc.copy()
-
-    # ── String normalisation ─────────────────────────────────────────────
-    for col in ['FROM', 'TO', 'GN', 'RT-TC', 'OV-TC',
-                'RT-PT-N', 'RT-PT-R', 'OV-PT-N', 'OV-PT-R',
-                'ISO', 'ISO-TC', 'UN', 'OV-SET', 'DIR']:
-        if col in toc.columns:
-            toc[col] = toc[col].astype(str).replace('nan', '')
-
-    rm_pat = r'[ \.\-\n#@\*\?\^\$\(\)]'
-    nr_pat = '|'.join(NR_PATTERNS) if NR_PATTERNS else r'\bN\b|\bR\b'
-    for col in ['FROM', 'TO', 'GN', 'RT-TC', 'OV-TC',
-                'RT-PT-N', 'RT-PT-R', 'OV-PT-N', 'OV-PT-R', 'ISO', 'UN']:
-        if col in toc.columns:
-            toc[col] = toc[col].str.replace(rm_pat, '', regex=True)
-            if 'PT' in col or col == 'ISO':
-                toc[col] = toc[col].str.replace(nr_pat, '', regex=True)
-
-    if 'ISO-PT-N' in toc.columns:
-        toc['RT-PT-N'] = _merge_iso_pts(
-            toc['RT-PT-N'],
-            toc['ISO-PT-N'].fillna('').astype(str).str.replace('nan', '', regex=False), '')
-    if 'ISO-PT-R' in toc.columns:
-        toc['RT-PT-R'] = _merge_iso_pts(
-            toc['RT-PT-R'],
-            toc['ISO-PT-R'].fillna('').astype(str).str.replace('nan', '', regex=False), '')
-
-    # ── Chainage ─────────────────────────────────────────────────────────
-    _ch_provided = bool(path_ch and os.path.isfile(str(path_ch).strip()))
-    if _ch_provided:
-        ch = read_chainage_file(path_ch)
-        ch = ch.fillna('')
-    else:
-        ch = pd.DataFrame(columns=['GR_NO', 'GR_CH'])
-    ch['GR_CH'] = pd.to_numeric(ch['GR_CH'], errors='coerce')  # blank -> NaN = missing
-    ch['GR_NO'] = ch['GR_NO'].astype(str).str.strip()
+    toc = _normalise_toc(toc)
+    ch = load_chainage(path_ch)
 
     missing = _missing_chainage(toc, ch)
     if missing:

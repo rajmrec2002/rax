@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Physical Progress Module</title>
+<link rel="icon" href="/assets/app_icon.png">
+<style>
+  :root {
+    --bg: #f1f5f9; --panel: #ffffff; --fg: #1e293b; --muted: #64748b; --line: #d5dde8;
+    --hdr: #1e3a5f; --h1: #1e3a5f; --h2: #1d4f8a; --h3: #0f6657; --h4: #3b1f6e;
+    --pri: #2563eb; --run: #15803d; --warn: #b45309; --err: #dc2626; --track: #dde3eb;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { background: var(--hdr); color: #f8fafc; display: flex; align-items: center;
+           gap: 12px; padding: 8px 16px; }
+  header img { width: 44px; height: 44px; }
+  header h1 { margin: 0; font-size: 20px; }
+  header p { margin: 0; color: #94a3b8; }
+  header .grow { flex: 1; }
+  main { max-width: 1100px; margin: 0 auto; padding: 10px 16px 40px; }
+  .card { background: var(--panel); border: 1px solid var(--line); margin-top: 10px; }
+  .card > h2 { margin: 0; padding: 5px 10px; color: #fff; font-size: 15px; }
+  .card .body { padding: 8px 10px; }
+  .grid { display: grid; grid-template-columns: 36px 220px 1fr; gap: 4px 8px; align-items: center; }
+  .grid .n { color: var(--pri); font-weight: bold; text-align: right; }
+  .hs { display: grid; grid-template-columns: 36px 1fr 1fr; gap: 4px 8px; margin-top: 4px; }
+  .hs .n { color: var(--pri); font-weight: bold; text-align: right; align-self: center; }
+  input[type=text], input[type=number], input[type=password], select, textarea {
+    width: 100%; padding: 4px 6px; border: 1px solid #b8c4d4; border-radius: 3px;
+    font: inherit; background: #fff; color: var(--fg); }
+  textarea { min-height: 70px; font-family: ui-monospace, Consolas, monospace; }
+  button { font: inherit; font-weight: bold; border: 1px solid transparent; border-radius: 3px;
+           padding: 4px 10px; cursor: pointer; background: #e8edf3; color: var(--fg); }
+  button:hover { border-color: #94a3b8; }
+  button.pri { background: var(--pri); color: #fff; }
+  button.run { background: var(--run); color: #fff; }
+  button.warn { background: var(--warn); color: #fff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+  .hint { color: var(--muted); font-size: 12px; }
+  .msg { margin-top: 6px; padding: 6px 8px; border-radius: 3px; display: none; white-space: pre-wrap; }
+  .msg.err { display: block; background: #fee2e2; color: #7f1d1d; }
+  .msg.ok { display: block; background: #dcfce7; color: #14532d; }
+  .msg.info { display: block; background: #fef3c7; color: #78350f; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  .bar { height: 10px; background: var(--track); border-radius: 5px; overflow: hidden; min-width: 90px; }
+  .bar > div { height: 100%; background: var(--pri); }
+  .st-done { color: var(--run); font-weight: bold; }
+  .st-failed, .st-cancelled { color: var(--err); font-weight: bold; }
+  .files a { display: inline-block; margin: 1px 8px 1px 0; font-size: 12px; }
+  .missing { color: var(--warn); font-size: 12px; }
+  .tablewrap { overflow-x: auto; }
+  @media (max-width: 700px) {
+    .grid { grid-template-columns: 28px 1fr; }
+    .grid > :nth-child(3n) { grid-column: 1 / -1; }
+    header p { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <img src="/assets/app_icon.png" alt="">
+  <div class="grow">
+    <h1>Physical Progress Module</h1>
+    <p>Locking square sheet, criss-cross and 3.47 / 5.16 dispensation – server v{{VERSION}}</p>
+  </div>
+  <div id="login" style="display:none">
+    <input type="password" id="token" placeholder="Login token" style="width:160px">
+  </div>
+</header>
+<main>
+<form id="f" autocomplete="off">
+  <div class="card"><h2 style="background:var(--h1)">File Selection</h2><div class="body grid">
+    <span class="n">01</span><label for="toc">TOC file</label>
+    <input type="file" id="toc" name="toc" accept=".csv,.xlsx,.xls,.ods,.pdf" required>
+    <span class="n">03</span><label for="chainage">Chainage file</label>
+    <input type="file" id="chainage" name="chainage" accept=".csv,.xlsx,.xls,.ods">
+    <span class="n">04</span><label for="vv">VV square sheet (if corrected)</label>
+    <input type="file" id="vv" name="vv" accept=".csv,.xlsx,.xls">
+  </div></div>
+
+  <div class="card"><h2 style="background:var(--h2)">Signal Inputs</h2><div class="body">
+    <div class="grid">
+      <span class="n">05</span><label for="stn">Station name</label>
+      <input type="text" id="stn" name="stn" required>
+    </div>
+    <div class="hs">
+      <span class="n">06</span><span class="hint">First stop signal no. (comma separated)</span>
+      <span class="hint">Reception direction / end name</span>
+      <span class="n">(A)</span><input type="text" name="hs_a"><input type="text" name="end_a">
+      <span class="n">(B)</span><input type="text" name="hs_b"><input type="text" name="end_b">
+      <span class="n">(C)</span><input type="text" name="hs_c"><input type="text" name="end_c">
+      <span class="n">(D)</span><input type="text" name="hs_d"><input type="text" name="end_d">
+    </div>
+    <div class="row" style="margin-left:44px">
+      <button type="button" id="detect">Auto-Detect Home Signals</button>
+      <span class="hint">Fills the groups; enter the end names yourself.</span>
+    </div>
+    <div class="grid" style="margin-top:6px">
+      <span class="n">07</span><label for="lno">Berthing lines</label>
+      <input type="number" id="lno" name="berthing_lines" min="1" max="99" value="1">
+      <span class="n">09</span><label for="cc">Require criss-cross?</label>
+      <select id="cc" name="criss_cross"><option value="false">NO</option><option value="true">YES</option></select>
+    </div>
+  </div></div>
+
+  <div class="card" id="cccard"><h2 style="background:var(--h3)">Criss-Cross Settings</h2><div class="body">
+    <div class="grid">
+      <span class="n">10</span><label for="cc_min">Minimum distance</label>
+      <input type="number" id="cc_min" name="cc_min" value="0" step="any">
+      <span class="n">11</span><label for="cc_max">Maximum distance</label>
+      <input type="number" id="cc_max" name="cc_max" value="0" step="any">
+      <span class="n">12</span><label for="cc_bands">Distance bands (m)</label>
+      <input type="text" id="cc_bands" name="cc_bands" placeholder="e.g. 0-120, 120-300, 300+   (blank = use min/max above)">
+      <span class="n">13</span><label for="extra">Chainages to add</label>
+      <textarea id="extra" name="extra_chainage" placeholder="One per line: name, chainage   e.g.  S12, 1234.5   or   PT101, 1300"></textarea>
+    </div>
+    <div class="row" style="margin-left:44px">
+      <button type="button" id="checkch">Check chainage</button>
+      <span class="hint">Lists signals / points of the TOC that have no chainage and adds them to field 13 to fill in.
+        Pairs that need a missing chainage stay locked.</span>
+    </div>
+    <div id="chmsg" class="msg"></div>
+  </div></div>
+
+  <div class="card"><h2 style="background:var(--h4)">Run</h2><div class="body">
+    <div class="row">
+      <button type="submit" class="run" id="runbtn">Run Fn</button>
+      <button type="button" id="savebtn">Save settings</button>
+      <button type="button" id="loadbtn">Load settings</button>
+      <input type="file" id="loadfile" accept=".txt" style="display:none">
+      <button type="reset" class="warn">RESET</button>
+    </div>
+    <div id="msg" class="msg"></div>
+  </div></div>
+</form>
+
+<div class="card"><h2 style="background:var(--hdr)">Jobs</h2><div class="body tablewrap">
+  <table><thead><tr><th>Station</th><th>Submitted</th><th>State</th><th>Progress</th><th>Outputs</th><th></th></tr></thead>
+  <tbody id="jobs"><tr><td colspan="6" class="hint">No jobs yet.</td></tr></tbody></table>
+</div></div>
+</main>
+
+<script>
+const LOGIN = {{LOGIN}};
+const $ = id => document.getElementById(id);
+const tokenBox = $('token');
+if (LOGIN) {
+  $('login').style.display = '';
+  try { tokenBox.value = localStorage.getItem('raxToken') || ''; } catch (e) {}
+  tokenBox.addEventListener('change', () => { try { localStorage.setItem('raxToken', tokenBox.value); } catch (e) {} refresh(); });
+}
+const hdrs = () => LOGIN ? { 'Authorization': 'Bearer ' + tokenBox.value } : {};
+const q = () => LOGIN ? '?token=' + encodeURIComponent(tokenBox.value) : '';
+
+function show(el, kind, text) { el.className = 'msg ' + kind; el.textContent = text; }
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({}, opts.headers || {}, hdrs());
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    let d = r.statusText;
+    try { const j = await r.json(); d = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail); } catch (e) {}
+    throw new Error(d);
+  }
+  return r.status === 204 ? null : r.json();
+}
+
+// criss-cross card only when needed
+const ccSel = $('cc');
+const syncCC = () => { $('cccard').style.opacity = ccSel.value === 'true' ? 1 : .55; };
+ccSel.addEventListener('change', syncCC); syncCC();
+
+$('detect').onclick = async () => {
+  const fd = new FormData();
+  if (!$('toc').files[0]) return show($('msg'), 'err', 'Choose the TOC file first (field 01).');
+  fd.append('toc', $('toc').files[0]);
+  show($('msg'), 'info', 'Reading TOC…');
+  try {
+    const r = await api('/api/detect-home-signals', { method: 'POST', body: fd });
+    const f = $('f');
+    r.groups.forEach((g, i) => { const k = 'abcd'[i]; if (k) f['hs_' + k].value = g.signals; });
+    show($('msg'), 'ok', 'Home signals detected. Enter the end / direction name for each group.');
+  } catch (e) { show($('msg'), 'err', e.message); }
+};
+
+$('checkch').onclick = async () => {
+  if (!$('toc').files[0]) return show($('chmsg'), 'err', 'Choose the TOC file first (field 01).');
+  const fd = new FormData();
+  fd.append('toc', $('toc').files[0]);
+  if ($('chainage').files[0]) fd.append('chainage', $('chainage').files[0]);
+  fd.append('extra_chainage', $('extra').value);
+  show($('chmsg'), 'info', 'Checking…');
+  try {
+    const r = await api('/api/check-chainage', { method: 'POST', body: fd });
+    if (!r.missing.length) return show($('chmsg'), 'ok', 'Every signal and point of the TOC has a chainage.');
+    const have = new Set($('extra').value.split('\n').map(l => l.split(/[,=:;\s]+/)[0].toUpperCase()));
+    const add = r.missing.filter(m => !have.has(m)).map(m => m + ', ');
+    $('extra').value = ($('extra').value.trim() ? $('extra').value.trim() + '\n' : '') + add.join('\n');
+    show($('chmsg'), 'info', (r.chainage_file ? '' : 'No chainage file attached. ') +
+      r.missing.length + ' signal(s)/point(s) have no chainage: ' + r.missing.join(', ') +
+      '\nThey were added to field 13 – type the chainage after each comma. ' +
+      'Lines left blank are ignored (pairs needing them stay locked).');
+  } catch (e) { show($('chmsg'), 'err', e.message); }
+};
+
+$('f').onsubmit = async ev => {
+  ev.preventDefault();
+  const f = $('f'), fd = new FormData(f);
+  ['chainage', 'vv'].forEach(k => { if (!$(k).files[0]) fd.delete(k); });
+  if (ccSel.value === 'true' && !$('chainage').files[0] && !$('extra').value.trim()
+      && !confirm('No chainage file attached: every criss-cross pair will stay locked. Run anyway?')) return;
+  $('runbtn').disabled = true;
+  show($('msg'), 'info', 'Uploading…');
+  try {
+    const j = await api('/api/jobs', { method: 'POST', body: fd });
+    show($('msg'), 'ok', 'Job ' + j.id + ' submitted. Follow it in the Jobs list below.');
+    refresh();
+  } catch (e) { show($('msg'), 'err', e.message); }
+  finally { $('runbtn').disabled = false; }
+};
+$('f').addEventListener('reset', () => setTimeout(syncCC, 0));
+
+// settings files compatible with the desktop app (NN. KEY=value)
+const KEYS = { STATION_NAME: 'stn', HS_A: 'hs_a', END_A: 'end_a', HS_B: 'hs_b', END_B: 'end_b',
+  HS_C: 'hs_c', END_C: 'end_c', HS_D: 'hs_d', END_D: 'end_d', BERTHING_LINES: 'berthing_lines',
+  CC_MIN: 'cc_min', CC_MAX: 'cc_max', CC_BANDS: 'cc_bands' };
+$('savebtn').onclick = () => {
+  const f = $('f'); const lines = [];
+  for (const [k, n] of Object.entries(KEYS)) lines.push(k + '=' + f[n].value);
+  lines.push('CRISS_CROSS=' + (ccSel.value === 'true' ? 'YES' : 'NO'));
+  const blob = new Blob([lines.map((l, i) => String(i + 1).padStart(2, '0') + '. ' + l).join('\n')], { type: 'text/plain' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = (f.stn.value || 'station') + '_settings.txt'; a.click();
+};
+$('loadbtn').onclick = () => $('loadfile').click();
+$('loadfile').onchange = async () => {
+  const t = await $('loadfile').files[0].text(); const f = $('f');
+  for (const line of t.split(/\r?\n/)) {
+    const m = line.replace(/^\d+\.\s*/, '').match(/^([A-Z_]+)=(.*)$/);
+    if (!m) continue;
+    if (KEYS[m[1]]) f[KEYS[m[1]]].value = m[2].trim();
+    if (m[1] === 'CRISS_CROSS') ccSel.value = m[2].trim().toUpperCase() === 'YES' ? 'true' : 'false';
+  }
+  syncCC(); show($('msg'), 'ok', 'Settings loaded. Choose the files again (browsers cannot reopen them).');
+};
+
+// jobs list
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const when = t => t ? new Date(t * 1000).toLocaleString() : '';
+async function act(id, what) {
+  try {
+    if (what === 'delete') { if (!confirm('Delete this job and its outputs?')) return; await api('/api/jobs/' + id, { method: 'DELETE' }); }
+    else await api('/api/jobs/' + id + '/cancel', { method: 'POST' });
+  } catch (e) { alert(e.message); }
+  refresh();
+}
+window.act = act;
+async function refresh() {
+  let rows;
+  try { rows = await api('/api/jobs?limit=50'); } catch (e) {
+    $('jobs').innerHTML = '<tr><td colspan="6" class="hint">' + esc(e.message) + '</td></tr>'; return;
+  }
+  if (!rows.length) { $('jobs').innerHTML = '<tr><td colspan="6" class="hint">No jobs yet.</td></tr>'; return; }
+  $('jobs').innerHTML = rows.map(j => {
+    const live = j.state === 'queued' || j.state === 'running';
+    const base = '/api/jobs/' + j.id;
+    const files = j.state === 'done'
+      ? '<a href="' + base + '/download' + q() + '"><b>All outputs (zip)</b></a><br>' +
+        (j.files || []).map(f => '<a href="' + base + '/files/' + encodeURIComponent(f) + q() + '">' + esc(f) + '</a>').join('')
+      : '';
+    const miss = (j.missing_chainage || []).length
+      ? '<div class="missing">No chainage for ' + j.missing_chainage.length + ': ' + esc(j.missing_chainage.join(', ')) +
+        ' – pairs needing them stay locked (see CH-MISSING file).</div>' : '';
+    const st = j.state + (j.state === 'queued' && j.queue_position ? ' (#' + j.queue_position + ')' : '');
+    return '<tr><td><b>' + esc(j.stn) + '</b>' + (j.criss_cross ? '<br><span class="hint">criss-cross</span>' : '') + '</td>' +
+      '<td>' + esc(when(j.created)) + '</td>' +
+      '<td class="st-' + esc(j.state) + '">' + esc(st) + (j.error ? '<div class="hint">' + esc(j.error) + '</div>' : '') + '</td>' +
+      '<td><div class="bar"><div style="width:' + (j.progress || 0) + '%"></div></div><span class="hint">' + (j.progress || 0) + '%</span></td>' +
+      '<td class="files">' + files + miss + '</td>' +
+      '<td>' + (live ? '<button onclick="act(\'' + j.id + '\',\'cancel\')">Cancel</button>'
+                     : '<button onclick="act(\'' + j.id + '\',\'delete\')">Delete</button>') + '</td></tr>';
+  }).join('');
+}
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

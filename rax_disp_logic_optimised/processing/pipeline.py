@@ -19,7 +19,7 @@ import pandas as pd
 from ..io.exporters import write_disp347_xlsx, write_disp516_xlsx
 from ..io.preprocessor import detect_toc_format, read_formatted_toc, read_toc_file
 from ..io.writers import write_table_file
-from .criss_cross import criss_cross_mvt
+from .criss_cross import criss_cross_mvt, load_chainage, missing_chainage
 from .dispensation import disp_lit_fn
 from .locking import ixl_fn
 from .square_sheet import (
@@ -84,6 +84,70 @@ def parse_home_signals(hs_texts: Sequence[str], end_texts: Sequence[str]):
 class RunResult:
     paths: Dict[str, str] = field(default_factory=dict)
     checks: pd.DataFrame = field(default_factory=pd.DataFrame)
+    # Signals / points with no chainage (criss-cross runs only).  Pairs
+    # that need one of them stay locked.
+    missing_chainage: List[str] = field(default_factory=list)
+
+
+def _read_toc(toc_path: str, hs, end, l_no: int) -> pd.DataFrame:
+    toc = read_formatted_toc(toc_path) if detect_toc_format(toc_path) else read_toc_file(toc_path)
+    return toc_format(toc, hs, end, l_no)
+
+
+def read_toc_preview(toc_path: str) -> pd.DataFrame:
+    """Raw TOC columns (for home-signal auto-detect), raw or formatted file."""
+    from ..core.constants import TOC_BLANK_COLS, TOC_INPUT_COLS
+    from ..io.readers import read_table_file
+    if not detect_toc_format(toc_path):
+        return read_toc_file(toc_path)
+    df = read_table_file(toc_path)
+    for col in TOC_INPUT_COLS + TOC_BLANK_COLS:
+        if col not in df.columns:
+            df[col] = ''
+    return df[TOC_INPUT_COLS + TOC_BLANK_COLS].fillna('').reset_index(drop=True)
+
+
+def check_chainage(toc_path: str, chainage_path: str = '',
+                   extra: Optional[Dict[str, float]] = None) -> List[str]:
+    """
+    Signals and points of the TOC that have no chainage in `chainage_path`
+    or `extra`.  Run before a criss-cross run so the user can supply them.
+    """
+    hs, end = parse_home_signals([''] * 4, [''] * 4)
+    toc = _read_toc(toc_path, hs, end, 1)
+    have = set((extra or {}).keys())
+    return [k for k in missing_chainage(toc, chainage_path) if k not in have]
+
+
+def parse_chainage_text(text: str) -> Dict[str, float]:
+    """
+    'S12, 1234.5\nPT101 = 1300' -> {'S12': 1234.5, 'PT101': 1300.0}
+
+    One entry per line, name and chainage separated by ',', '=', ':' or
+    whitespace.  Lines with a blank chainage are skipped.
+    """
+    out: Dict[str, float] = {}
+    for line in str(text or '').splitlines():
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        parts = [x for x in re.split(r'[,=:;\t ]+', line) if x]
+        if len(parts) < 2:
+            continue
+        try:
+            out[parts[0].upper()] = float(parts[1])
+        except ValueError:
+            raise ValueError(f'Chainage "{line}": "{parts[1]}" is not a number')
+    return out
+
+
+def _chainage_with_extra(chainage_path: str, extra: Dict[str, float], out_path: str) -> str:
+    """Write the chainage file plus the extra entries (extra ones win) to out_path."""
+    ch = load_chainage(chainage_path)[['GR_NO', 'GR_CH']]
+    add = pd.DataFrame(sorted(extra.items()), columns=['GR_NO', 'GR_CH'])
+    merged = pd.concat([ch[~ch['GR_NO'].isin(add['GR_NO'])], add], ignore_index=True)
+    merged.to_csv(out_path, index=False)
+    return out_path
 
 
 def run_dispensation(
@@ -97,6 +161,7 @@ def run_dispensation(
     criss_cross: bool = False,
     chainage_path: str = '',
     bands: Optional[Sequence[Band]] = None,
+    extra_chainage: Optional[Dict[str, float]] = None,
     progress: Optional[Callable[[float], None]] = None,
     t_str: Optional[str] = None,
 ) -> RunResult:
@@ -106,6 +171,11 @@ def run_dispensation(
     Without criss-cross one set of documents is written.  With criss-cross
     one set is written per distance band; in a band only pairs whose
     criss-cross distance lies in (min, max] are dispensed.
+
+    `extra_chainage` ({'S12': 1234.5, 'PT101': 1300}) adds to / overrides the
+    chainage file; the chainage actually used is written as CH-USED.
+    Signals and points still without chainage are listed in TOC-CHECK and
+    written to a CH-MISSING template (fill in GR_CH and re-run).
     """
     prog = progress or (lambda _p: None)
     t_str = t_str or strftime('%Y%m%d_%H-%M')
@@ -113,9 +183,26 @@ def run_dispensation(
     p = lambda tag, ext='.xlsx': os.path.join(save_dir, f'STN_{stn}{tag}-gen-_{t_str}{ext}')
 
     prog(0)
-    toc = read_formatted_toc(toc_path) if detect_toc_format(toc_path) else read_toc_file(toc_path)
-    toc = toc_format(toc, hs, end, l_no)
+    toc = _read_toc(toc_path, hs, end, l_no)
     checks = [toc_data_checks(toc).assign(SET='TOC data')]
+
+    if criss_cross:
+        if extra_chainage:
+            res.paths['CH-USED'] = _chainage_with_extra(
+                chainage_path, extra_chainage, p('CH-USED', '.csv'))
+            chainage_path = res.paths['CH-USED']
+        res.missing_chainage = missing_chainage(toc, chainage_path)
+        if res.missing_chainage:
+            why = ('No chainage file attached' if not (chainage_path and os.path.isfile(chainage_path))
+                   else 'Not in chainage file')
+            checks.append(pd.DataFrame({
+                'ROUTE': res.missing_chainage,
+                'CHECK': 'No chainage (criss-cross pairs that need it stay locked)',
+                'DETAIL': why + '; fill in the CH-MISSING file and run again',
+                'SET': 'chainage'}))
+            res.paths['CH-MISSING'] = p('CH-MISSING', '.csv')
+            pd.DataFrame({'GR_NO': res.missing_chainage, 'GR_CH': ''}).to_csv(
+                res.paths['CH-MISSING'], index=False)
     prog(10)
 
     res.paths['SQSH'] = p('SQSH')

@@ -16,6 +16,7 @@ from ..core.constants import (
     COL_ALIASES, RE_CELL_NOISE, RE_TC_SUFFIX,
     EXCEL_ENGINES,
 )
+from .readers import _engine_for
 from ..utils.patterns import norm_col, strip_isolated_specials
 from ..utils.text_cleaning import (
     has_alphanumeric_content,
@@ -250,7 +251,7 @@ def read_toc_file(path: str) -> pd.DataFrame:
     else:
         logger.info("TOC Pass 1: Reading raw (header=None)...")
         if e in EXCEL_ENGINES:
-            raw = pd.read_excel(path, header=None, engine=EXCEL_ENGINES[e])
+            raw = pd.read_excel(path, header=None, engine=_engine_for(e))
         else:
             raw = pd.read_csv(path, header=None)
         logger.info("TOC Pass 1: %d rows x %d cols", len(raw), len(raw.columns))
@@ -338,7 +339,7 @@ def detect_toc_format(path: str) -> bool:
     try:
         if e in EXCEL_ENGINES:
             preview = pd.read_excel(
-                path, header=None, nrows=5, engine=EXCEL_ENGINES[e]
+                path, header=None, nrows=5, engine=_engine_for(e)
             )
         else:
             preview = pd.read_csv(path, header=None, nrows=5)

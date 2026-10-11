@@ -1,0 +1,27 @@
+[Unit]
+Description=Rax Logic dispensation server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rax
+Group=rax
+EnvironmentFile=/etc/rax-logic/server.env
+WorkingDirectory=/var/lib/rax-logic
+ExecStart=/opt/rax-logic/venv/bin/rax-server
+Restart=on-failure
+RestartSec=5
+# Jobs run as child processes; stop them with the server.
+KillMode=control-group
+TimeoutStopSec=20
+
+# Hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/rax-logic
+
+[Install]
+WantedBy=multi-user.target

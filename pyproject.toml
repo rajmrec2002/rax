@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rax-logic"
+version = "2.1.0"
+description = "Rax Logic – Railway Physical Progress Module (locking, criss-cross and dispensation)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "Proprietary"}
+authors = [{name = "Rax Development Team"}]
+
+# Core = the processing engine (needed by the desktop app and the server).
+dependencies = [
+    "pandas>=2.0.0",
+    "openpyxl>=3.1.0",
+    "xlrd>=2.0.1",
+]
+
+[project.optional-dependencies]
+# Desktop app (runs jobs on this computer or on a server)
+gui = ["PySide6-Essentials>=6.5"]
+# Linux server: web page + REST API
+server = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "python-multipart>=0.0.9",
+]
+fast = [
+    "python-calamine>=0.1.0",
+    "odfpy>=1.4.1",
+]
+pdf = [
+    "pdfplumber>=0.10.0",
+]
+dev = [
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "pytest>=8.0.0",
+    "httpx>=0.27",
+]
+all = [
+    "rax-logic[gui,server,fast,pdf,dev]",
+]
+
+[project.scripts]
+rax-logic = "rax_disp_logic_optimised.cli.main:main"
+rax-server = "rax_disp_logic_optimised.server.__main__:main"
+rax-client = "rax_disp_logic_optimised.client.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["rax_disp_logic_optimised*"]
+exclude = ["rax_disp_logic_optimised.tests*"]
+
+[tool.setuptools.package-data]
+"rax_disp_logic_optimised" = ["gui/assets/*.png", "gui/assets/*.ico", "server/static/*.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["rax_disp_logic_optimised/tests"]
+
+[tool.ruff]
+target-version = "py39"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true

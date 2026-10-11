@@ -4,8 +4,8 @@ Main PySide6 GUI application window.
 
 import os
 import platform
-import re
 import subprocess
+import tempfile
 import threading
 import traceback
 from time import strftime
@@ -16,7 +16,7 @@ from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
     QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
-    QMessageBox, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QMessageBox, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from ..utils.logging_util import debug_print
@@ -26,7 +26,9 @@ from ..io.preprocessor import read_toc_file, detect_toc_format, read_formatted_t
 from ..core.constants import TOC_INPUT_COLS, TOC_BLANK_COLS
 from ..processing.auto_detect import auto_detect_home_signals
 from ..processing.toc_format import toc_format
-from ..processing.pipeline import parse_bands, parse_home_signals, run_dispensation
+from ..core.settings import read_settings, write_settings
+from ..processing.pipeline import check_chainage, parse_bands
+from ..service.jobs import STATES_FINAL, cancel_process, check_process, start_job_process
 
 # App / window icon (Indian Railways logo)
 _ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'app_icon.png')
@@ -107,6 +109,7 @@ class _WorkerSignals(QObject):
     pb_value = Signal(float)
     error    = Signal(str)
     success  = Signal()
+    finished = Signal(dict)       # job status (local or server run)
 
 
 class RaxLogicApp(QMainWindow):
@@ -131,6 +134,12 @@ class RaxLogicApp(QMainWindow):
         self._wsig.success.connect(
             lambda: QMessageBox.information(self, 'Success',
                                             'Function completed successfully.'))
+        self._wsig.finished.connect(self._job_finished)
+        self._wsig.error.connect(lambda _m: self._set_busy(False))
+        self._job = None                  # (process, status_path) of a local run
+        self._job_timer = QTimer(self)
+        self._job_timer.timeout.connect(self._poll_job)
+        self._remote_stop = threading.Event()
         self._build_ui()
         self._apply_styles()
 
@@ -393,10 +402,15 @@ class RaxLogicApp(QMainWindow):
         bl.addWidget(self._btn('Save Settings', self.save_settings))
         bl.addWidget(self._btn('Load Settings', self.load_settings))
         bl.addSpacing(10)
-        bl.addWidget(self._btn('Gen TOC', self.start_gen_toc,
-                                _BTN_PRI, _BTN_PRI_HOV, '#fff'))
-        bl.addWidget(self._btn('Run Fn', self.start_generate_disp,
-                                _BTN_RUN, _BTN_RUN_HOV, '#fff'))
+        self.btn_gen = self._btn('Gen TOC', self.start_gen_toc,
+                                 _BTN_PRI, _BTN_PRI_HOV, '#fff')
+        bl.addWidget(self.btn_gen)
+        self.btn_run = self._btn('Run Fn', self.start_generate_disp,
+                                 _BTN_RUN, _BTN_RUN_HOV, '#fff')
+        bl.addWidget(self.btn_run)
+        self.btn_stop = self._btn('Stop', self.stop_job)
+        self.btn_stop.setEnabled(False)
+        bl.addWidget(self.btn_stop)
         bl.addWidget(self._btn('RESET',  self.reset,
                                 _BTN_RST, _BTN_RST_HOV, '#fff'))
         bl.addStretch()
@@ -418,6 +432,20 @@ class RaxLogicApp(QMainWindow):
                           lambda _=False, a=attr: self.open_file(getattr(self, a))))
         out_lay.addStretch()
         g.addWidget(out_w, 3, 0, 1, 5)
+
+        srv_w = QWidget(); srv_w.setObjectName('card')
+        sl = QHBoxLayout(srv_w)
+        sl.setContentsMargins(0, 2, 0, 0); sl.setSpacing(6)
+        sl.addWidget(QLabel('Run on server'))
+        self.e_server = QLineEdit()
+        self.e_server.setPlaceholderText(
+            'blank = run on this computer;  or e.g. http://10.0.0.5:8080')
+        self.e_server.setToolTip(
+            'Address of a Rax Logic server. The TOC, chainage and VV files are uploaded,\n'
+            'the job runs on the server and the outputs are saved in the folder of field 02.\n'
+            'The login token is read from ~/.rax-logic/client.conf or $RAX_TOKEN.')
+        sl.addWidget(self.e_server, 1)
+        g.addWidget(srv_w, 4, 0, 1, 5)
 
     # ── Event handlers ────────────────────────────────────────────────────
 
@@ -481,6 +509,7 @@ class RaxLogicApp(QMainWindow):
         self.e_cc_min.setText('0')
         self.e_cc_max.setText('0')
         self.e_cc_bands.clear()
+        self.e_server.clear()
         self.pb.setValue(0)
 
     def save_settings(self):
@@ -492,26 +521,22 @@ class RaxLogicApp(QMainWindow):
         base_dir = os.path.expanduser('~/.rax-logic')
         os.makedirs(base_dir, exist_ok=True)
         filepath = os.path.join(base_dir, f'{stn}_{strftime("%Y%m%d_%H%M%S")}.txt')
-        entries = [
-            f'TOC_FILE={self.fp1}',
-            f'SAVE_DIR={self.save_dir}',
-            f'CHAINAGE_FILE={self.fp_ch}',
-            f'VV_FILE={self.fpvv}',
-            f'STATION_NAME={self.e_stn.text()}',
-            f'HS_A={self.e_hs[0].text()}',  f'END_A={self.e_end[0].text()}',
-            f'HS_B={self.e_hs[1].text()}',  f'END_B={self.e_end[1].text()}',
-            f'HS_C={self.e_hs[2].text()}',  f'END_C={self.e_end[2].text()}',
-            f'HS_D={self.e_hs[3].text()}',  f'END_D={self.e_end[3].text()}',
-            f'BERTHING_LINES={self.cb_lno.currentText()}',
-            f'VV_SQSH={self.cb_vvm.currentText()}',
-            f'CRISS_CROSS={self.cb_cc.currentText()}',
-            f'CC_MIN={self.e_cc_min.text()}',
-            f'CC_MAX={self.e_cc_max.text()}',
-            f'CC_BANDS={self.e_cc_bands.text()}',
-        ]
+        cfg = {
+            'TOC_FILE': self.fp1, 'SAVE_DIR': self.save_dir,
+            'CHAINAGE_FILE': self.fp_ch, 'VV_FILE': self.fpvv,
+            'STATION_NAME': self.e_stn.text(),
+            'BERTHING_LINES': self.cb_lno.currentText(),
+            'VV_SQSH': self.cb_vvm.currentText(),
+            'CRISS_CROSS': self.cb_cc.currentText(),
+            'CC_MIN': self.e_cc_min.text(), 'CC_MAX': self.e_cc_max.text(),
+            'CC_BANDS': self.e_cc_bands.text(),
+            'SERVER_URL': self.e_server.text().strip(),
+        }
+        for i, grp in enumerate('ABCD'):
+            cfg[f'HS_{grp}'] = self.e_hs[i].text()
+            cfg[f'END_{grp}'] = self.e_end[i].text()
         try:
-            with open(filepath, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(f'{i+1:02d}. {e}' for i, e in enumerate(entries)))
+            write_settings(filepath, cfg)
             QMessageBox.information(self, 'Settings Saved',
                                     f'Settings saved to:\n{filepath}')
         except Exception as e:
@@ -526,14 +551,7 @@ class RaxLogicApp(QMainWindow):
         if not filepath:
             return
         try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                content = f.read()
-            cfg = {}
-            for line in content.splitlines():
-                line = re.sub(r'^\d+\.\s*', '', line.strip())
-                if '=' in line:
-                    k, _, v = line.partition('=')
-                    cfg[k.strip()] = v.strip()
+            cfg = read_settings(filepath)
 
             if cfg.get('TOC_FILE') and os.path.isfile(cfg['TOC_FILE']):
                 self.fp1 = cfg['TOC_FILE']; self.lb_toc.setText(self.fp1)
@@ -555,6 +573,7 @@ class RaxLogicApp(QMainWindow):
             self.e_cc_min.setText(cfg.get('CC_MIN', '0'))
             self.e_cc_max.setText(cfg.get('CC_MAX', '0'))
             self.e_cc_bands.setText(cfg.get('CC_BANDS', ''))
+            self.e_server.setText(cfg.get('SERVER_URL', ''))
 
             QMessageBox.information(self, 'Settings Loaded',
                                     f'Settings loaded from:\n{os.path.basename(filepath)}')
@@ -640,6 +659,14 @@ class RaxLogicApp(QMainWindow):
     def _set_pb(self, value):
         self._wsig.pb_value.emit(float(value))
 
+    def _set_busy(self, busy: bool):
+        self.btn_run.setEnabled(not busy)
+        self.btn_gen.setEnabled(not busy)
+        self.btn_stop.setEnabled(busy)
+
+    def _home_signal_texts(self):
+        return ([e.text() for e in self.e_hs], [e.text() for e in self.e_end])
+
     def start_gen_toc(self):
         if not self.fp1:
             QMessageBox.critical(self, 'No TOC File',
@@ -649,40 +676,30 @@ class RaxLogicApp(QMainWindow):
             QMessageBox.critical(self, 'No Save Folder',
                                  'Please select an output folder first.')
             return
-        threading.Thread(target=self.gen_toc_task, daemon=True).start()
+        # Read the widgets here, in the GUI thread; the worker gets plain values.
+        from ..processing.pipeline import parse_home_signals
+        hs, end = parse_home_signals(*self._home_signal_texts())
+        args = (self.fp1, self.save_dir, self.e_stn.text(), hs, end,
+                int(self.cb_lno.currentText()))
+        self._set_busy(True)
+        self.btn_stop.setEnabled(False)
+        threading.Thread(target=self.gen_toc_task, args=args, daemon=True).start()
 
-    def gen_toc_task(self):
+    def gen_toc_task(self, toc_path, save_dir, stn, hs, end, l_no_val):
         try:
             self._set_pb(0)
-            stn   = self.e_stn.text()
             t_str = strftime('%Y%m%d_%H-%M')
-            self.path2 = os.path.join(
-                self.save_dir, f'STN_{stn}TOC-fmt-_{t_str}.xlsx')
-
-            hs, end = [], []
-            for i in range(4):
-                hs_text  = self.e_hs[i].text().strip()
-                end_text = self.e_end[i].text().strip()
-                if hs_text and not end_text:
-                    hs.append([''])
-                    end.append('')
-                else:
-                    hs.append(
-                        [x.strip().upper() + '_'
-                         for x in hs_text.split(',') if x.strip()] or ['']
-                    )
-                    end.append(end_text.upper())
-            l_no_val = int(self.cb_lno.currentText())
-
-            toc = (read_toc_file(self.fp1)
-                   if not detect_toc_format(self.fp1)
-                   else read_formatted_toc(self.fp1))
+            path2 = os.path.join(save_dir, f'STN_{stn}TOC-fmt-_{t_str}.xlsx')
+            toc = (read_toc_file(toc_path)
+                   if not detect_toc_format(toc_path)
+                   else read_formatted_toc(toc_path))
             self._set_pb(40)
             toc = toc_format(toc, hs, end, l_no_val)
             self._set_pb(80)
-            write_table_file(toc, self.path2, index=False)
+            write_table_file(toc, path2, index=False)
+            self.path2 = path2
             self._set_pb(100)
-            self._wsig.success.emit()
+            self._wsig.finished.emit({'state': 'gen-toc'})
         except Exception as e:
             debug_print(f'[ERROR] {e}\n{traceback.format_exc()}')
             self._wsig.error.emit(f'{type(e).__name__}: {e}')
@@ -713,13 +730,225 @@ class RaxLogicApp(QMainWindow):
                 + '\n\nFill in the direction names and run again to include them.',
             )
 
-        if self.cb_cc.currentText().upper() == 'YES':
+        vv = self.cb_vvm.currentText().upper() == 'YES'
+        if vv and not self.fpvv:
+            QMessageBox.critical(self, 'No VV File',
+                                 'Please select a VV file for corrected sqsh (field 04).')
+            return
+        criss = self.cb_cc.currentText().upper() == 'YES'
+        bands, extra = None, {}
+        if criss:
             try:
-                self._cc_bands = self._read_bands()
+                bands = self._read_bands()
             except ValueError as e:
                 QMessageBox.critical(self, 'Distance Bands', str(e))
                 return
-        threading.Thread(target=self.generate_disp_task, daemon=True).start()
+            extra = self._ask_missing_chainage()
+            if extra is None:
+                return
+
+        hs, end = self._home_signal_texts()
+        params = {
+            'toc_path': self.fp1, 'save_dir': self.save_dir, 'stn': self.e_stn.text(),
+            'hs': hs, 'end': end, 'l_no': int(self.cb_lno.currentText()),
+            'vv_file': self.fpvv if vv else '',
+            'criss_cross': criss, 'chainage_path': self.fp_ch if criss else '',
+            'bands': [[lo, None if hi == float('inf') else hi] for lo, hi in (bands or [])],
+            'extra_chainage': extra,
+        }
+        self._set_busy(True)
+        self.pb.setValue(0)
+        server = self.e_server.text().strip()
+        if server:
+            self._remote_stop.clear()
+            threading.Thread(target=self._remote_task, args=(server, params),
+                             daemon=True).start()
+            return
+        # Local run in its own process: the window stays responsive.
+        status = os.path.join(tempfile.gettempdir(), f'rax_job_{os.getpid()}.json')
+        try:
+            for f in (status, status + '.params.json'):
+                if os.path.exists(f):
+                    os.remove(f)
+            self._job = (start_job_process(params, status), status)
+        except Exception as e:
+            self._set_busy(False)
+            QMessageBox.critical(self, 'Error', f'Could not start the run:\n{e}')
+            return
+        self._job_timer.start(300)
+
+    def _poll_job(self):
+        if not self._job:
+            self._job_timer.stop()
+            return
+        proc, status = self._job
+        st = check_process(proc, status)
+        self.pb.setValue(float(st.get('progress', 0) or 0))
+        if st.get('state') in STATES_FINAL:
+            self._job_timer.stop()
+            self._job = None
+            proc.join(timeout=1)
+            for f in (status, status + '.params.json'):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+            self._wsig.finished.emit(st)
+
+    def stop_job(self):
+        if self._job:
+            proc, status = self._job
+            cancel_process(proc, status)
+        self._remote_stop.set()
+
+    def _remote_task(self, server, params):
+        """Upload, wait and download on a worker thread (network only, no GUI calls)."""
+        from ..client.api import RaxClient, ServerError
+        job_id, c = None, None
+        try:
+            c = RaxClient(server, timeout=120)
+            b = params['bands']
+            band_txt = ', '.join(f'{lo:g}-{hi:g}' if hi is not None else f'{lo:g}+' for lo, hi in b)
+            job = c.submit(params['toc_path'], params['stn'], params['hs'], params['end'],
+                           params['l_no'], criss_cross=params['criss_cross'],
+                           chainage=params['chainage_path'], vv=params['vv_file'],
+                           bands=band_txt, extra_chainage=params['extra_chainage'])
+            job_id = job['id']
+            st = job
+            while st.get('state') not in STATES_FINAL:
+                if self._remote_stop.wait(2):
+                    st = c.cancel(job_id)
+                    break
+                st = c.status(job_id)
+                self._set_pb(st.get('progress', 0))
+            if st.get('state') == 'done':
+                c.download(job_id, params['save_dir'])
+                st['paths'] = {k: os.path.join(params['save_dir'], v)
+                               for k, v in st.get('outputs', {}).items()}
+            self._wsig.finished.emit(st)
+        except ServerError as e:
+            self._wsig.error.emit(str(e))
+        except Exception as e:
+            debug_print(f'[ERROR] {e}\n{traceback.format_exc()}')
+            self._wsig.error.emit(f'{type(e).__name__}: {e}')
+
+    @Slot(dict)
+    def _job_finished(self, st):
+        self._set_busy(False)
+        state = st.get('state')
+        if state == 'gen-toc':
+            self._wsig.success.emit()
+            return
+        if state == 'cancelled':
+            self.pb.setValue(0)
+            QMessageBox.information(self, 'Stopped', 'The run was stopped.')
+            return
+        if state != 'done':
+            QMessageBox.critical(self, 'Error', st.get('error') or 'The run failed.')
+            return
+        paths = st.get('paths', {})
+        self.path1 = paths.get('SQSH', '')
+        first = next((k for k in paths if k.startswith('347')), '347')
+        sfx = first[3:]
+        self.path2 = paths.get('TOC' + sfx, '')
+        self.path_347 = paths.get('347' + sfx, '')
+        self.path_516 = paths.get('516' + sfx, '')
+        self.pb.setValue(100)
+        msg = 'Function completed successfully.'
+        miss = st.get('missing_chainage') or []
+        if miss:
+            msg += (f'\n\nNo chainage for {len(miss)} signal(s)/point(s): '
+                    f'{", ".join(miss[:30])}{" …" if len(miss) > 30 else ""}\n'
+                    'Criss-cross pairs that need them stay locked. Fill in the '
+                    'CH-MISSING file in the output folder and run again.')
+        if st.get('checks'):
+            msg += f'\n\nTOC-CHECK: {st["checks"]} finding(s) – see the TOC-CHECK file.'
+        (QMessageBox.warning if miss else QMessageBox.information)(self, 'Success', msg)
+
+    def _ask_missing_chainage(self):
+        """
+        Before a criss-cross run: list signals/points with no chainage and let
+        the user type them.  Returns {name: chainage} (may be empty), or None
+        to cancel the run.
+        """
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            missing = check_chainage(self.fp1, self.fp_ch)
+        except Exception as e:
+            missing = None
+            err = e
+        finally:
+            QApplication.restoreOverrideCursor()
+        if missing is None:
+            QMessageBox.warning(self, 'Chainage Check',
+                                f'Could not check the chainage:\n{err}')
+            return {}
+        if not missing:
+            return {}
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle('Missing Chainage')
+        dlg.setMinimumWidth(460)
+        lay = QVBoxLayout(dlg)
+        no_file = not (self.fp_ch and os.path.isfile(self.fp_ch))
+        info = QLabel(
+            ('No chainage file is attached (field 03).\n' if no_file else
+             'These signals / points are not in the chainage file.\n')
+            + f'{len(missing)} entr{"y" if len(missing) == 1 else "ies"} missing. '
+            'Enter the chainage for any you know; criss-cross pairs that need a '
+            'blank one stay locked. The values are used for this run only and '
+            'are written to the CH-USED file in the output folder.')
+        info.setWordWrap(True)
+        lay.addWidget(info)
+        area = QScrollArea(); area.setWidgetResizable(True)
+        inner = QWidget(); gl = QGridLayout(inner)
+        entries = {}
+        for r, name in enumerate(missing):
+            gl.addWidget(QLabel(name), r, 0)
+            e = QLineEdit(); e.setPlaceholderText('chainage (m)')
+            gl.addWidget(e, r, 1)
+            entries[name] = e
+        area.setWidget(inner)
+        area.setMinimumHeight(min(400, 34 * len(missing) + 10))
+        lay.addWidget(area)
+        bb = QDialogButtonBox()
+        bb.addButton('Run', QDialogButtonBox.ButtonRole.AcceptRole)
+        bb.addButton(QDialogButtonBox.StandardButton.Cancel)
+        save = bb.addButton('Save list…', QDialogButtonBox.ButtonRole.ActionRole)
+        save.setToolTip('Save the missing entries as a chainage file (GR_NO, GR_CH) to fill in\n'
+                        'and attach as field 03 or add to your chainage file.')
+
+        def _save_list():
+            path, _ = QFileDialog.getSaveFileName(
+                dlg, 'Save missing chainage list',
+                os.path.join(self.save_dir or os.path.expanduser('~'),
+                             f'{self.e_stn.text() or "STN"}_CH-MISSING.csv'),
+                'CSV files (*.csv)')
+            if path:
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write('GR_NO,GR_CH\n')
+                    for name, e in entries.items():
+                        f.write(f'{name},{e.text().strip()}\n')
+        save.clicked.connect(_save_list)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+        while True:
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                return None
+            out, bad = {}, []
+            for name, e in entries.items():
+                t = e.text().strip()
+                if not t:
+                    continue
+                try:
+                    out[name] = float(t)
+                except ValueError:
+                    bad.append(f'{name}: "{t}"')
+            if not bad:
+                return out
+            QMessageBox.warning(dlg, 'Invalid Chainage',
+                                'Not a number:\n' + '\n'.join(bad))
 
     def _read_bands(self):
         if self.e_cc_bands.text().strip():
@@ -730,34 +959,16 @@ class RaxLogicApp(QMainWindow):
             raise ValueError('Maximum distance must be greater than minimum distance.')
         return [(lo, hi)]
 
-    def generate_disp_task(self):
-        try:
-            hs, end = parse_home_signals([e.text() for e in self.e_hs],
-                                         [e.text() for e in self.e_end])
-            sqsh_m_yn = self.cb_vvm.currentText().upper()
-            if sqsh_m_yn == 'YES' and not self.fpvv:
-                self._wsig.error.emit('Please select a VV file for corrected sqsh.')
+    def closeEvent(self, event):
+        if self._job or self.btn_stop.isEnabled():
+            if QMessageBox.question(
+                    self, 'Run in Progress',
+                    'A run is still in progress. Stop it and close?') \
+                    != QMessageBox.StandardButton.Yes:
+                event.ignore()
                 return
-            criss = self.cb_cc.currentText().upper() == 'YES'
-            res = run_dispensation(
-                self.fp1, self.save_dir, self.e_stn.text(), hs, end,
-                int(self.cb_lno.currentText()),
-                vv_file=self.fpvv if sqsh_m_yn == 'YES' else '',
-                criss_cross=criss,
-                chainage_path=self.fp_ch,
-                bands=getattr(self, '_cc_bands', None) if criss else None,
-                progress=self._set_pb,
-            )
-            self.path1 = res.paths['SQSH']
-            first = next((k for k in res.paths if k.startswith('347')), '347')
-            sfx = first[3:]
-            self.path2 = res.paths.get('TOC' + sfx, '')
-            self.path_347 = res.paths.get('347' + sfx, '')
-            self.path_516 = res.paths.get('516' + sfx, '')
-            self._wsig.success.emit()
-        except Exception as e:
-            debug_print(f'[ERROR] {e}\n{traceback.format_exc()}')
-            self._wsig.error.emit(f'{type(e).__name__}: {e}')
+            self.stop_job()
+        event.accept()
 
 
 def launch_app(config_path: Optional[str] = None) -> None:

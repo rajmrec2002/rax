@@ -1,9 +1,41 @@
 # Changes
 
+## 2.1.0 – Linux server, client install, chainage prompt
+
+* **Server** (`rax-server`, `server/`): web page plus REST API. Jobs run one
+  per process, queued up to `RAX_WORKERS`; uploads and outputs are kept per
+  job. Optional login token. Installed as a systemd service by
+  `deploy/install.sh server`.
+* **Client:** `deploy/install.sh client` installs the desktop app and
+  `rax-client` (standard library only). The desktop app has a "Run on
+  server" field; blank means run on this PC.
+* **Desktop app runs jobs in a separate process** (`service/jobs.py`) and
+  polls its progress. Before, the run was a thread inside the GUI that read
+  widgets from that thread and could be started twice. A 5-minute GRF
+  criss-cross run now never blocks the window for more than 0.1 s. Added a
+  Stop button; Run and Gen TOC are disabled while a run is going.
+* **Missing chainage is asked for and reported.** Before, the app never asked:
+  a missing entry, or no chainage file at all, kept those pairs locked, and
+  only the log said so.
+  * The desktop app now lists the missing signals and points before the run
+    and lets you enter them; the web page and `rax-client` have the same
+    option.
+  * Entered values are written to CH-USED; anything still missing goes to
+    TOC-CHECK and a CH-MISSING template.
+* **Criss-cross text is now the same on every run.** When an overlap point
+  could be "busted", the point named in the text was taken from an unordered
+  set, so it changed between runs (e.g. 133/134 vs 145/146 on GRF). The
+  distances and locking were never affected. The lists are now sorted.
+* Excel files now open without `python-calamine` (falls back to openpyxl);
+  before, a plain install could not read `.xlsx` TOCs.
+* `pyproject.toml` moved to the repository root and fixed (the old build
+  backend name was invalid). Extras: `gui`, `server`, `fast`, `pdf`, `dev`.
+
+
 ## 2.0.1 – locking and dispensation fixes
 
 Tested on GRF (`GRF_TOC_Final_01.04.2026.xlsx` + `GRF_CH-Signal_Point.xlsx`,
-criss-cross 0–3000 m) and ADI. Regression tests: `make test` (37 tests).
+criss-cross 0–3000 m) and ADI. Regression tests: `make test`.
 
 Check: the locking rules (point needed N by one route and R by the other,
 shared track circuit, same line) were re-derived independently from the raw

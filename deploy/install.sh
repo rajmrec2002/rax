@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+# Rax Logic installer for Linux.
+#
+#   Server (needs root; runs as a systemd service):
+#     sudo ./deploy/install.sh server [--port 8080] [--workers 2] [--token TOKEN | --no-token]
+#                                     [--bind 0.0.0.0] [--wheelhouse DIR]
+#
+#   Client (normal user; no root):
+#     ./deploy/install.sh client [--cli-only] [--server http://host:8080] [--token TOKEN]
+#                                [--wheelhouse DIR]
+#       default: desktop app (PySide6) + rax-client command
+#       --cli-only: rax-client command only (no pandas / PySide6)
+#
+#   Offline installs: on a PC with internet run
+#     ./deploy/install.sh bundle DIR        (downloads all wheels into DIR)
+#   copy the repository and DIR across, then add  --wheelhouse DIR.
+#
+#   Remove:
+#     sudo ./deploy/install.sh uninstall-server [--purge]   (--purge also deletes jobs)
+#     ./deploy/install.sh uninstall-client
+set -euo pipefail
+
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PY="${PYTHON:-python3}"
+PREFIX=/opt/rax-logic
+DATA=/var/lib/rax-logic
+ETC=/etc/rax-logic
+UNIT=/etc/systemd/system/rax-logic.service
+CLIENT_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/rax-logic"
+BIN="$HOME/.local/bin"
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+say() { echo "==> $*"; }
+
+need_python() {
+  command -v "$PY" >/dev/null || die "python3 not found. Install it first (e.g. sudo apt install python3 python3-venv)."
+  "$PY" -c 'import sys; sys.exit(sys.version_info < (3, 9))' || die "Python 3.9 or newer is needed."
+  "$PY" -c 'import venv, ensurepip' 2>/dev/null || die "python3-venv is missing (Debian/Ubuntu: sudo apt install python3-venv)."
+}
+
+pip_install() {   # venv_dir  spec...
+  local venv="$1"; shift
+  local opts=()
+  [[ -n "${WHEELHOUSE:-}" ]] && opts=(--no-index --find-links "$WHEELHOUSE")
+  "$venv/bin/python" -m pip install --upgrade "${opts[@]}" pip wheel setuptools >/dev/null
+  "$venv/bin/python" -m pip install --upgrade "${opts[@]}" "$@"
+}
+
+# ── server ───────────────────────────────────────────────────────────────────
+install_server() {
+  local port=8080 workers=2 bind=0.0.0.0 token="" no_token=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --port) port="$2"; shift 2 ;;
+      --workers) workers="$2"; shift 2 ;;
+      --bind) bind="$2"; shift 2 ;;
+      --token) token="$2"; shift 2 ;;
+      --no-token) no_token=1; shift ;;
+      --wheelhouse) WHEELHOUSE="$(realpath "$2")"; shift 2 ;;
+      *) die "unknown option $1" ;;
+    esac
+  done
+  [[ $EUID -eq 0 ]] || die "server install needs root: sudo $0 server ..."
+  command -v systemctl >/dev/null || die "systemd not found."
+  need_python
+
+  say "Creating user 'rax' and folders"
+  id rax >/dev/null 2>&1 || useradd --system --home-dir "$DATA" --shell /usr/sbin/nologin rax
+  mkdir -p "$PREFIX" "$DATA" "$ETC"
+  chown rax:rax "$DATA"; chmod 750 "$DATA"
+
+  say "Installing into $PREFIX/venv"
+  [[ -x "$PREFIX/venv/bin/python" ]] || "$PY" -m venv "$PREFIX/venv"
+  pip_install "$PREFIX/venv" "$SRC[server,fast]"
+
+  if [[ -f "$ETC/server.env" ]]; then
+    say "Keeping existing $ETC/server.env"
+  else
+    if [[ $no_token -eq 0 && -z "$token" ]]; then
+      token="$("$PY" -c 'import secrets; print(secrets.token_urlsafe(24))')"
+    fi
+    say "Writing $ETC/server.env"
+    cat > "$ETC/server.env" <<CONF
+# Rax Logic server settings (restart after changes: sudo systemctl restart rax-logic)
+RAX_HOST=$bind
+RAX_PORT=$port
+RAX_DATA_DIR=$DATA
+# Jobs that may run at the same time (criss-cross uses all CPU cores per job)
+RAX_WORKERS=$workers
+# Login token clients must send; blank = no login (only on a trusted network)
+RAX_TOKEN=$token
+RAX_MAX_UPLOAD_MB=50
+# Delete finished jobs after this many days (0 = keep)
+RAX_KEEP_DAYS=30
+CONF
+    chown root:rax "$ETC/server.env"; chmod 640 "$ETC/server.env"
+  fi
+
+  say "Installing systemd service"
+  install -m 644 "$SRC/deploy/rax-logic.service" "$UNIT"
+  systemctl daemon-reload
+  systemctl enable rax-logic >/dev/null
+  systemctl restart rax-logic
+
+  # shellcheck disable=SC1091
+  . "$ETC/server.env"
+  local ip
+  ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  sleep 2
+  if systemctl is-active --quiet rax-logic; then
+    say "Server running."
+  else
+    echo "Service did not start; see: journalctl -u rax-logic -n 50" >&2
+  fi
+  cat <<MSG
+
+  Web page:  http://${ip:-<server-ip>}:${RAX_PORT}/
+  Login token: ${RAX_TOKEN:-<none – anyone on the network can use it>}
+  Settings:  $ETC/server.env      Jobs: $DATA/jobs
+  Logs:      journalctl -u rax-logic -f
+  Firewall:  open TCP ${RAX_PORT} if needed (e.g. sudo ufw allow ${RAX_PORT}/tcp)
+
+  On each client PC:
+    ./deploy/install.sh client --server http://${ip:-<server-ip>}:${RAX_PORT} --token '${RAX_TOKEN}'
+MSG
+}
+
+uninstall_server() {
+  [[ $EUID -eq 0 ]] || die "needs root"
+  systemctl disable --now rax-logic 2>/dev/null || true
+  rm -f "$UNIT"; systemctl daemon-reload
+  rm -rf "$PREFIX"
+  if [[ "${1:-}" == "--purge" ]]; then
+    rm -rf "$DATA" "$ETC"; userdel rax 2>/dev/null || true
+    say "Server removed, jobs and settings deleted."
+  else
+    say "Server removed. Jobs kept in $DATA, settings in $ETC (use --purge to delete)."
+  fi
+}
+
+# ── client ───────────────────────────────────────────────────────────────────
+install_client() {
+  local cli_only=0 server="" token=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --cli-only) cli_only=1; shift ;;
+      --server) server="$2"; shift 2 ;;
+      --token) token="$2"; shift 2 ;;
+      --wheelhouse) WHEELHOUSE="$(realpath "$2")"; shift 2 ;;
+      *) die "unknown option $1" ;;
+    esac
+  done
+  need_python
+  say "Installing into $CLIENT_HOME/venv"
+  mkdir -p "$CLIENT_HOME" "$BIN"
+  [[ -x "$CLIENT_HOME/venv/bin/python" ]] || "$PY" -m venv "$CLIENT_HOME/venv"
+  if [[ $cli_only -eq 1 ]]; then
+    # rax-client uses only the standard library
+    pip_install "$CLIENT_HOME/venv" --no-deps "$SRC"
+  else
+    pip_install "$CLIENT_HOME/venv" "$SRC[gui,fast]"
+  fi
+  ln -sf "$CLIENT_HOME/venv/bin/rax-client" "$BIN/rax-client"
+
+  if [[ $cli_only -eq 0 ]]; then
+    ln -sf "$CLIENT_HOME/venv/bin/rax-logic" "$BIN/rax-logic"
+    local icon="$CLIENT_HOME/app_icon.png"
+    cp "$SRC/rax_disp_logic_optimised/gui/assets/app_icon.png" "$icon"
+    mkdir -p "$HOME/.local/share/applications"
+    cat > "$HOME/.local/share/applications/rax-logic.desktop" <<DESK
+[Desktop Entry]
+Type=Application
+Name=Rax Logic – Physical Progress Module
+Comment=Locking square sheet, criss-cross and dispensation
+Exec=$CLIENT_HOME/venv/bin/rax-logic --no-auto-install
+Icon=$icon
+Terminal=false
+Categories=Office;Engineering;
+DESK
+    command -v update-desktop-database >/dev/null && update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+    # Qt needs these system libraries on a minimal desktop
+    if ! ldconfig -p 2>/dev/null | grep -q libxkbcommon-x11; then
+      echo "Note: if the window does not open, install: sudo apt install libxkbcommon-x11-0 libxcb-cursor0 libegl1"
+    fi
+  fi
+
+  if [[ -n "$server" ]]; then
+    "$CLIENT_HOME/venv/bin/rax-client" config --server "$server" --token "$token" \
+      || echo "Saved, but the server did not answer yet." >&2
+  fi
+  case ":$PATH:" in *":$BIN:"*) ;; *) echo "Add $BIN to PATH:  echo 'export PATH=\$HOME/.local/bin:\$PATH' >> ~/.bashrc" ;; esac
+  say "Client installed."
+  [[ $cli_only -eq 0 ]] && echo "  Desktop app: 'Rax Logic' in the applications menu, or run: rax-logic"
+  echo "  Command line: rax-client --help"
+  [[ -n "$server" ]] && echo "  Server: $server (in the desktop app put it in 'Run on server', or leave blank to run locally)"
+  return 0
+}
+
+uninstall_client() {
+  rm -rf "$CLIENT_HOME"
+  rm -f "$BIN/rax-client" "$BIN/rax-logic" "$HOME/.local/share/applications/rax-logic.desktop"
+  say "Client removed (settings in ~/.rax-logic kept)."
+}
+
+bundle() {
+  local dir="${1:?usage: $0 bundle DIR}"
+  need_python
+  mkdir -p "$dir"
+  "$PY" -m pip download --dest "$dir" pip wheel setuptools "$SRC[server,gui,fast]"
+  "$PY" -m pip wheel --no-deps --wheel-dir "$dir" "$SRC"
+  say "Wheels saved in $dir (same Python version and CPU type as the target PCs)."
+}
+
+case "${1:-}" in
+  server) shift; install_server "$@" ;;
+  client) shift; install_client "$@" ;;
+  uninstall-server) shift; uninstall_server "$@" ;;
+  uninstall-client) shift; uninstall_client ;;
+  bundle) shift; bundle "$@" ;;
+  *) sed -n '2,25p' "$0"; exit 1 ;;
+esac

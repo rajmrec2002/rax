@@ -27,8 +27,8 @@ def _xlsx_engine() -> str:
 
 def _engine_for(e: str) -> str:
     """Pick the best available engine for extension e."""
-    if e in ('.xlsx', '.xlsm'):
-        return _xlsx_engine()
+    if e in ('.xlsx', '.xlsm', '.xlam'):
+        return _xlsx_engine()      # calamine if installed, else openpyxl
     return EXCEL_ENGINES.get(e, 'openpyxl')
 
 

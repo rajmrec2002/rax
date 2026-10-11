@@ -31,6 +31,27 @@
     01BT-139T-(139/140 R)-140T-141T-146T into S33→S45's route at point 146,
     401.89 m from S31. Within the set distance, 139/140N goes into the ISO
     of S33_39. S17_04M / CO21_01D needs no isolation (double overshoot).
+* **Basic principles applied** (isolation):
+  * a point track circuit carries the point number, at least 3 digits
+    (121T; crossover 101/102 → 101T and 102T, or 101/102T); line track
+    circuits (01AT, 3BT) have none;
+  * facing / trailing is decided by point number and direction: DN (odd
+    signal) → odd point ends facing; UP (even) → even ends facing. Diversion,
+    and so isolation, is only possible at a facing point. This agrees with the
+    TOC track-circuit order at all 2,994 checks for ADI and 548 of 564 for
+    GRF; the 16 GRF exceptions are the S17/S19 lists at 112T already flagged
+    as out of order;
+  * S / SH / A / CO from one post to the next on the same line follow the
+    same path and points to the same berthing. The shunt routes that leave
+    out the berthing track circuits (GRF 32, ADI 85), or list them out of
+    order (GRF SH17), take the matching S / CO list for isolation (locking
+    unchanged).
+* A pair already protected by an ISO point added for another pair is
+  reported as isolated ("already in ISO of …") and its dispensation is
+  dropped. It was shown as separated before.
+* Layout check: links outvoted by the other routes (e.g. S38_01D listing
+  01AT before 01BT in the UP direction) are set aside and listed. Only real
+  ties hold pairs back as "check layout".
 * The isolation point is a facing point outside both routes and overlaps,
   locked the other way. Where several cut every path, the one that locks
   the fewest other movements is chosen, Normal first:

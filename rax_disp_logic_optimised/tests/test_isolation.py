@@ -182,3 +182,51 @@ def test_point_cannot_be_locked_both_ways():
     co21 = [('A', ('140T', '141T', '146T'), {'139/140': 'R', '141/142': 'N'}),
             ('A', ('140T', '141T', '142T', '134T'), {'139/140': 'R', '141/142': 'R'})]
     assert _choose_points(co21, nil) == [('139/140', 'N')]
+
+
+def test_point_track_circuits_have_three_digit_numbers():
+    from rax_disp_logic_optimised.processing.isolation import _point_ends
+    assert _point_ends('121T') == ['121']
+    assert _point_ends('107/108T') == ['107', '108']
+    assert _point_ends('01AT') == [] and _point_ends('3BT') == [] and _point_ends('JKCL1AT') == []
+    assert _point_ends('581T/ALT') == ['581']
+
+
+def test_facing_by_point_number_and_direction():
+    from rax_disp_logic_optimised.processing.isolation import _facing
+    assert _facing('101', 'DN') is True and _facing('102', 'DN') is False
+    assert _facing('102', 'UP') is True and _facing('121', 'UP') is False
+    assert _facing('121', '') is None
+
+
+def test_shunt_takes_the_berthing_of_its_post_to_post_movement():
+    from rax_disp_logic_optimised.processing.isolation import _routes
+    rows = [dict(FROM='S21', TO='S31', UN='01D', **{'RT-PT-N': '113/114N', 'RT-TC': '113T, 01AT, 01BT'}),
+            dict(FROM='SH21', TO='SH31', UN='01D', **{'RT-PT-N': '113/114N', 'RT-TC': '113T'})]
+    _, ltoc = _run(rows)
+    r = {x.name: x for x in _routes(ltoc)}
+    assert r['SH21_01D'].rt_seq == ['113T', '01AT', '01BT']
+
+
+def test_trailing_end_of_crossover_gives_no_isolation_point():
+    # UP movement (even signals) over the same crossover: 101 is trailing for
+    # it, so an overshoot that only passes 101 cannot be turned away there
+    s14 = dict(FROM='S14', TO='S20', UN='6', **{'RT-PT-R': '101/102R', 'RT-TC': '102T, 101T, 1BT'})
+    a = dict(FROM='SH12', TO='S14', UN='2', **{'RT-TC': '2DT, 2CT'})
+    b = dict(FROM='S30', TO='S32', UN='5', **{'RT-TC': '1BT', 'OV-TC': '1AT'})
+    res, _ = _run(LAYOUT + [s14, a, b])
+    row = _row(res, 'SH12_2', 'S30_5')
+    # facing end for UP is 102 (even): that is where it can be turned away
+    assert row is not None and row['ISOLATION POINTS'] == '101/102N'
+    assert 'at PT' in row['OVERSHOOT PATH (track circuits)']
+
+
+def test_pair_covered_by_iso_added_for_another_pair_counts_as_isolated():
+    # a second movement on the same line, same post-to-post path as the shunt
+    a2 = dict(FROM='A11', TO='S13', UN='1', **{'RT-TC': '1AT, 1BT'})
+    res, _ = _run(LAYOUT + [A, B, a2])
+    first = _row(res, 'SH11_1', 'S22_2')
+    second = _row(res, 'A11_1', 'S22_2')
+    assert first['RESULT'] == 'isolated' and first['LOCKED AS'] == 'ISO of S22_2'
+    assert second['RESULT'] == 'isolated' and second['LOCKED AS'] == 'already in ISO of S22_2'
+    assert frozenset(('A11_1', 'S22_2')) in res.isolated

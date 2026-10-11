@@ -39,6 +39,20 @@ the fewest other movements is chosen (minimum repercussion), Normal first:
 
 Isolated pairs need no dispensation; pairs that cannot be isolated keep it.
 
+Principles used
+---------------
+* A point track circuit carries the point number (at least 3 digits):
+  121T for single-ended point 121; 101T and 102T, or 101/102T, for the two
+  ends of crossover 101/102.  Line track circuits (01AT, 3BT …) have none.
+* Facing / trailing comes from the point number and the direction: in the
+  DN direction (odd signal numbers) odd point ends are facing, in the UP
+  direction even ones.  Diversion is possible only at a facing point.
+* S, SH, A and CO movements from one signal post to the next follow the
+  same path, over the same points, to the same berthing in rear of the
+  next stop signal post.  Where a shunt route leaves out the berthing
+  track circuits, those of the matching S / CO movement are used here
+  (isolation only; the locking is unchanged).
+
 Track layout
 ------------
 Read from the TOC: RT-TC followed by OV-TC lists a route's track circuits
@@ -46,8 +60,9 @@ in running order and the route's point positions say which leg of each
 point it uses.  At a point's track circuit the edge used with the point
 both Normal and Reverse is the toe; edges used only Normal / only Reverse
 are the legs.  A track circuit has two neighbours, plus one for each point
-end in it; where the TOC implies more, the order is doubtful (LAYOUT CHECK)
-and pairs that depend on it are reported for checking, not changed.
+end in it.  Where the TOC implies more, the links given by fewer routes are
+set aside and listed in LAYOUT CHECK; only where that cannot be decided (a
+tie) are pairs that depend on it reported for checking, not changed.
 """
 
 import itertools
@@ -72,7 +87,18 @@ COND_MARK = '#'         # conditional isolation:  #121N# with S12_12
 MAX_ISO_POINTS = 3      # most isolation points tried for one pair
 
 _RE_PT = re.compile(r'(\d{1,4}(?:/\d{1,4})?)')
-_RE_POINT_TC = re.compile(r'^\d+(?:/\d+)*[A-Z]?T$')
+
+
+def _point_ends(tc: str) -> List[str]:
+    """Point numbers in a track-circuit name (3+ digits): '107/108T' -> ['107', '108']."""
+    return re.findall(r'\d{3,}', str(tc))
+
+
+def _facing(end: str, direction: str) -> Optional[bool]:
+    """DN: odd point ends are facing; UP: even ones.  None if direction unknown."""
+    if direction not in ('UP', 'DN'):
+        return None
+    return (int(end) % 2 == 1) == (direction == 'DN')
 
 Edge = FrozenSet[str]
 
@@ -95,6 +121,7 @@ class _Route:
     name: str
     frm: str                             # starting signal
     to: str                              # next stop signal
+    dir: str                             # UP / DN
     seq: List[str]                       # RT-TC + OV-TC in running order (as listed)
     rt_seq: List[str]                    # route track circuits in order (CO: from S route)
     rt: Set[str]                         # route track circuits
@@ -102,6 +129,7 @@ class _Route:
     has_ov: bool
     pos: Dict[str, str]                  # route + overlap points
     iso: Dict[str, str]                  # isolation points
+    rt_pos: Dict[str, str] = field(default_factory=dict)   # route points only
 
     @property
     def zone(self) -> Set[str]:
@@ -130,10 +158,12 @@ def _routes(ltoc: pd.DataFrame) -> List[_Route]:
     rt_tc = co_track_circuits(ltoc, 'RT-TC')               # CO routes take their S route's
     ov_tc = co_track_circuits(ltoc, 'OV-TC', need=has_ov)
     for k, (_, r) in enumerate(ltoc.iterrows()):
-        pos = {}
+        pos, rt_pos = {}, {}
         for col, p in (('RT-PT-N', 'N'), ('RT-PT-R', 'R'), ('OV-PT-N', 'N'), ('OV-PT-R', 'R')):
             for pt in _points(r.get(col, '')):
                 pos[pt] = p
+                if col.startswith('RT'):
+                    rt_pos[pt] = p
         if 'ISO-PT-N' in r.index or 'ISO-PT-R' in r.index:
             # after locking the ISO column may be shown without N; the
             # positions are in ISO-PT-N / ISO-PT-R
@@ -149,18 +179,39 @@ def _routes(ltoc: pd.DataFrame) -> List[_Route]:
         rt = set(rt_seq)
         ov = set(ov_seq) - rt
         out.append(_Route(str(r['FROM-TO']), str(r['FROM']).strip().upper(),
-                          str(r['TO']).strip().upper(), seq, rt_seq, rt, ov,
-                          bool(ov_seq) or has_ov[k], pos, iso))
+                          str(r['TO']).strip().upper(), str(r.get('DIR', '')).strip().upper(),
+                          seq, rt_seq, rt, ov, bool(ov_seq) or has_ov[k], pos, iso, rt_pos))
+    _same_berthing(out, [str(u).strip().upper() for u in ltoc['UN']])
     return out
+
+
+def _same_berthing(routes: List[_Route], lines: List[str]) -> None:
+    """
+    S / SH / A / CO from one post to the next post on the same line share
+    path and berthing: a movement whose route track circuits are all in the
+    longest list of its group (typically a shunt route without the berthing
+    track circuits, or listed out of order) takes that list, in its order.
+    """
+    groups: Dict[tuple, List[_Route]] = defaultdict(list)
+    for r, un in zip(routes, lines):
+        if post_key(r.frm) and post_key(r.to):
+            groups[(post_key(r.frm), post_key(r.to), un)].append(r)
+    for members in groups.values():
+        ref = max((m.rt_seq for m in members), key=lambda q: (len(q), q))
+        for m in members:
+            if m.rt_seq != ref and set(m.rt_seq) <= set(ref):
+                m.rt_seq = list(ref)
+                m.rt = set(ref)
+                m.ov -= m.rt
 
 
 def build_layout(routes: List[_Route]) -> Layout:
     lay = Layout()
     all_pts = {p for r in routes for p in list(r.pos) + list(r.iso)}
     for r in routes:
-        for tc in r.seq:
-            if _RE_POINT_TC.match(tc):
-                nums = set(re.findall(r'\d+', tc))
+        for tc in r.seq + r.rt_seq:
+            nums = set(_point_ends(tc))
+            if nums:
                 lay.tc_pts[tc] |= {p for p in all_pts if set(p.split('/')) & nums}
 
     support: Counter = Counter()
@@ -184,15 +235,16 @@ def build_layout(routes: List[_Route]) -> Layout:
     dropped: Set[Edge] = set()
     for node, ns in nbrs.items():
         # plain track: 2 neighbours; each point end in the track circuit adds a leg
-        ends = len(set(re.findall(r'\d+', node))) if _RE_POINT_TC.match(node) else 0
-        limit = 2 + ends
+        limit = 2 + len(set(_point_ends(node)))
         if len(ns) > limit:
             ranked = sorted(ns, key=lambda n: (-support[frozenset((node, n))], n))
             keep_n = support[frozenset((node, ranked[limit - 1]))]
             weak = [n for n in ranked[limit:] if support[frozenset((node, n))] < keep_n]
             if len(ranked) - len(weak) > limit:
-                weak = ranked[limit:]               # cannot rank: mark all extras
-            lay.doubtful.add(node)
+                weak = ranked[limit:]               # cannot rank: a tie
+                lay.doubtful.add(node)              # -> pairs relying on it are held back
+            # else the extra links are clearly outvoted by the other routes:
+            # set aside and listed for correcting the TOC, results not held back
             for n in weak:
                 e = frozenset((node, n))
                 dropped.add(e)
@@ -219,25 +271,33 @@ def build_layout(routes: List[_Route]) -> Layout:
 
 
 def _transition(lay: Layout, node: str, prev: Optional[str], nxt: str,
-                fixed: Dict[str, str]) -> Tuple[bool, Tuple[Tuple[str, str], ...]]:
+                fixed: Dict[str, str], direction: str = ''
+                ) -> Tuple[bool, Tuple[Tuple[str, str], ...]]:
     """
     Can a train at `node`, having come from `prev`, run on to `nxt`?
     Returns (possible, facing points it needs and their positions).
+    Facing / trailing by point number and direction (DN odd, UP even); the
+    leg (N / R) leading to `nxt` from the TOC layout.
     """
     need = []
+    ends_here = set(_point_ends(node))
     for p in lay.tc_pts.get(node, ()):
         rin = lay.role.get((frozenset((prev, node)), p)) if prev else None
         rout = lay.role.get((frozenset((node, nxt)), p))
-        if rin in ('N', 'R') and rout in ('N', 'R') and rin != rout:
-            return False, ()                        # leg to leg: not possible
-        facing = rout in ('N', 'R') and (rin == 'toe' or prev is None)
-        if facing:
+        ends = [e for e in p.split('/') if e in ends_here]
+        fac = _facing(ends[0], direction) if len(ends) == 1 else None
+        if fac is None:                             # direction unknown: by the layout
+            fac = rout in ('N', 'R') and (rin == 'toe' or prev is None)
+        if fac:
+            if rout not in ('N', 'R'):
+                continue                            # leg not known
             if p in fixed:
                 if fixed[p] != rout:
                     return False, ()                # point lies the other way
             else:
                 need.append((p, rout))
-        # trailing (leg -> toe) runs through whatever the position
+        elif rin in ('N', 'R') and rout in ('N', 'R') and rin != rout:
+            return False, ()                        # trailing: leg to leg not possible
     return True, tuple(need)
 
 
@@ -268,15 +328,25 @@ def _overshoot_paths(lay: Layout, r: _Route, by_post: Dict[str, List[_Route]],
                 continue
             cur, prev = node, came
             n2, s2, ok = list(nodes), list(steps), True
+            direction = r.dir if r.dir in ('UP', 'DN') else c.dir
             for tc in c.rt_seq:
                 if tc == cur:
                     continue
-                good, need = _transition(lay, cur, prev, tc, r.fixed)
-                if not good:
-                    ok = False              # a point locked by r sends it elsewhere
-                    break
                 n2.append(tc)
-                s2.append(tuple((p, pos, cur, prev) for p, pos in need))
+                need = []
+                ends_here = set(_point_ends(tc))
+                for p, pos in c.rt_pos.items():
+                    for e in (x for x in p.split('/') if x in ends_here):
+                        if _facing(e, direction) is False:
+                            continue            # trailing: runs through
+                        if p in r.fixed:
+                            if r.fixed[p] != pos:
+                                ok = False      # locked by r the other way: not this path
+                        else:
+                            need.append((p, pos, tc, cur))     # met at tc, coming from cur
+                if not ok:
+                    break
+                s2.append(tuple(need))
                 prev, cur = cur, tc
             if not ok or not n2:
                 continue
@@ -292,7 +362,7 @@ def _overshoot_paths(lay: Layout, r: _Route, by_post: Dict[str, List[_Route]],
 
 
 def _alt_leg_nodes(lay: Layout, p: str, pos: str, node: str, came: Optional[str],
-                   fixed: Dict[str, str]) -> Set[str]:
+                   fixed: Dict[str, str], direction: str = '') -> Set[str]:
     """
     Track circuits a train facing point p at `node` can reach within
     ALT_LEG_TCS when p lies `pos` (any way through other unlocked points).
@@ -306,7 +376,7 @@ def _alt_leg_nodes(lay: Layout, p: str, pos: str, node: str, came: Optional[str]
         for nxt in sorted(lay.adj.get(cur, ())):
             if nxt == prev or (cur, nxt) in seen:
                 continue
-            good, _ = _transition(lay, cur, prev, nxt, fx)
+            good, _ = _transition(lay, cur, prev, nxt, fx, direction)
             if not good:
                 continue
             seen.add((cur, nxt))
@@ -401,7 +471,7 @@ def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
     def alt(src: _Route, p: str, pos: str, at: str, came: Optional[str]) -> Set[str]:
         key = (src.name, p, pos, at, came)
         if key not in alt_cache:
-            alt_cache[key] = _alt_leg_nodes(lay, p, pos, at, came, src.fixed)
+            alt_cache[key] = _alt_leg_nodes(lay, p, pos, at, came, src.fixed, src.dir)
         return alt_cache[key]
 
     def repercussion(rname: str, p: str, pos: str, other: str) -> Set[str]:
@@ -414,7 +484,9 @@ def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
         if not (reach[a_name] & B.rt) and not (reach[b_name] & A.rt):
             stats['separated'] += 1
             continue
-        fx = {**fixed(B), **fixed(A)}
+        fx = {**B.fixed, **A.fixed}            # as in the TOC
+        fx_added = {**added[b_name], **added[a_name]}   # added here for earlier pairs
+        covered = []                    # paths already cut by an added ISO point
         live = []                       # (overshooting movt, description, facing points needed)
         seen_paths = set()
         for src, dst in ((A, B), (B, A)):
@@ -439,6 +511,11 @@ def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
                         req.setdefault(p, (pos, at, came))
                 if bad or any(p in fx and fx[p] != v[0] for p, v in req.items()):
                     continue                        # a facing point lies the other way
+                cut = [p + fx_added[p] for p, v in req.items()
+                       if p not in fx and p in fx_added and fx_added[p] != v[0]]
+                if cut:
+                    covered.append(cut[0])
+                    continue
                 # facing points it needs whose other leg really leads away
                 free = {p: v[0] for p, v in req.items() if p not in fx
                         and not (alt(src, p, _opp(v[0]), v[1], v[2]) & dst.rt)}
@@ -448,7 +525,16 @@ def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
                         + '-'.join((src.rt_seq[-1],) + ov.nodes[:k + 1]) + where)
                 live.append((src.name, desc, free, (src.rt_seq[-1],) + ov.nodes[:k + 1]))
         if not live:
-            stats['separated'] += 1
+            if covered:                             # isolated by an ISO point added earlier
+                owners = sorted({n for n in (a_name, b_name)
+                                 for c in covered if c[:-1] in added[n]})
+                isolated.add(frozenset((a_name, b_name)))
+                stats['isolated'] += 1
+                rows.append((a_name, b_name, 'isolated', ', '.join(sorted(set(covered))),
+                             'already in ISO of ' + ', '.join(owners), '-',
+                             'covered by the isolation added for another pair'))
+            else:
+                stats['separated'] += 1
             continue
         doubtful = any(n in lay.doubtful for x in live for n in x[3])
         if any(not x[2] for x in live):

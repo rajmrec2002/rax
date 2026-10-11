@@ -31,6 +31,20 @@
     01BT-139T-(139/140 R)-140T-141T-146T into S33→S45's route at point 146,
     401.89 m from S31. Within the set distance, 139/140N goes into the ISO
     of S33_39. S17_04M / CO21_01D needs no isolation (double overshoot).
+* **Post-to-post rule in the locking too.** S, SH, A and CO from one post to
+  the next post on the same line use the same track circuits and points.
+  The TOC gives no track circuits for CO and no berthing for SH, by
+  convention, so:
+  * CO takes the track circuits of the S movement between the same posts.
+    This was matched by signal number before (CO21 → S21); it is now matched
+    by post;
+  * SH / A get the S movement's berthing track circuits;
+  * with no S movement between those posts, the line's berthing by name
+    (01T / 01AT / 01BT).
+
+  Effect: GRF 6,009 → 6,030 conflicting pairs (+21) and ADI 45,772 →
+  46,010 (+238). All the additions are shunt movements now locked through
+  their berthing, e.g. CO3_DMABM1 / SH15_3; nothing was unlocked.
 * **Basic principles applied** (isolation):
   * a point track circuit carries the point number, at least 3 digits
     (121T; crossover 101/102 → 101T and 102T, or 101/102T); line track

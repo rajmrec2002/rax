@@ -56,36 +56,71 @@ def post_key(signal) -> str:
     return m.group(1) if m else ''
 
 
+def _tc_list(val) -> List[str]:
+    return [t.strip() for t in re.split(r'[,\s]+', str(val).upper()) if t.strip()
+            and _has_alnum(t)]
+
+
 def co_track_circuits(toc: pd.DataFrame, col: str = 'RT-TC', need=None) -> pd.Series:
     """
-    Track-circuit column `col` with calling-on routes filled in from their
-    main route.
+    Track-circuit column `col` with the post-to-post rule applied.
 
-    A CO<n> route whose `col` is blank (or a placeholder such as '_' / '-')
-    runs over the same track as the S<n> route to the same TO signal and
-    line, so it takes that route's track circuits (exact UN match first,
-    else the first S<n> route to the same TO).  `need`, if given, is a
-    boolean list: only CO rows marked True are filled.  Other rows are
-    returned unchanged.
+    S, SH, A and CO movements from one signal post to the next post on the
+    same line run over the same track and points to the same berthing in
+    rear of the next stop signal.  By convention the TOC gives no track
+    circuits for CO and no berthing track circuits for SH, so:
+
+    * a CO movement with `col` blank (or '_' / '-') takes the track circuits
+      of the S movement between the same posts on the same line (else the
+      first S movement between those posts);
+    * for RT-TC, an SH or A movement keeps its own track circuits and gets
+      those of that S movement it lacks (the berthing); if there is no such
+      S movement, the line's berthing track circuits by name (line 01:
+      01T / 01AT / 01BT, whichever the TOC has).
+
+    `need`, if given, is a boolean list: only CO rows marked True are
+    filled (used for OV-TC: only CO rows that list overlap points).
     """
     frm = toc['FROM'].astype(str).str.strip().str.upper()
     to = toc['TO'].astype(str).str.strip().str.upper()
     unk = [un_key(u) for u in toc['UN'].tolist()]
     tcs = toc[col].fillna('').astype(str)
     need = [True] * len(toc) if need is None else list(need)
+    pf = [post_key(f) for f in frm]
+    pt = [post_key(t) for t in to]
 
     by_route: Dict[tuple, str] = {}
-    by_to: Dict[tuple, str] = {}
-    for f, t, u, tc in zip(frm, to, unk, tcs):
-        if f.startswith('S') and not f.startswith('SH') and _has_alnum(tc):
-            by_route.setdefault((f, t, u), tc)
-            by_to.setdefault((f, t), tc)
+    by_posts: Dict[tuple, str] = {}
+    for f, a, b, u, tc in zip(frm, pf, pt, unk, tcs):
+        if f.startswith('S') and not f.startswith('SH') and a and _has_alnum(tc):
+            by_route.setdefault((a, b, u), tc)
+            by_posts.setdefault((a, b), tc)
+
+    all_tcs: List[str] = []
+    if col == 'RT-TC':
+        for tc in tcs:
+            all_tcs += [t for t in _tc_list(tc) if t not in all_tcs]
+
+    def berthing(u: str) -> List[str]:
+        line = re.sub(r'^0+', '', str(u))
+        if not line:
+            return []
+        pat = re.compile(r'^0*' + re.escape(line) + r'[AB]?T$')    # 01T, 01AT, 01BT
+        return [t for t in all_tcs if pat.match(t)]
 
     out = tcs.tolist()
-    for k, (f, t, u, tc) in enumerate(zip(frm, to, unk, tcs)):
+    for k, (f, a, b, u, tc) in enumerate(zip(frm, pf, pt, unk, tcs)):
         if f.startswith('CO') and need[k] and not _has_alnum(tc):
-            main = 'S' + f[2:]
-            out[k] = by_route.get((main, t, u)) or by_to.get((main, t), '')
+            out[k] = by_route.get((a, b, u)) or by_posts.get((a, b), '')
+        elif col == 'RT-TC' and (f.startswith('SH') or re.match(r'^A\d', f)) and _has_alnum(tc):
+            own = _tc_list(tc)
+            ref = _tc_list(by_route.get((a, b, u), ''))
+            if ref:
+                full = ref if set(own) <= set(ref) else own + [t for t in ref if t not in own]
+            else:
+                full = own + [t for t in berthing(u) if t not in own]
+            if full != own:
+                out[k] = ', '.join(full)
     return pd.Series(out, index=toc.index, dtype=str)
 
 
@@ -93,8 +128,9 @@ def track_circuits_for_locking(toc: pd.DataFrame) -> pd.Series:
     """
     TCK column: route + overlap + isolation track circuits.
 
-    CO routes inherit RT-TC from their S route; they inherit OV-TC only
-    when the CO row itself lists overlap points (a calling-on route
+    Post-to-post rule (see co_track_circuits): CO routes take RT-TC from
+    their S movement, SH / A routes get its berthing; CO routes take OV-TC
+    only when the CO row itself lists overlap points (a calling-on route
     normally has no overlap).
     """
     tmp = toc[['RT-TC', 'OV-TC', 'ISO-TC']].copy()

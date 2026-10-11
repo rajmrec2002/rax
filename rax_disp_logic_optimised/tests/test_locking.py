@@ -243,3 +243,30 @@ def test_underscore_track_circuit_names_are_read_and_lock():
     ])
     assert cell(vv, 'S1_NLT1D', 'S2_NL') == 'X'
     assert cell(vv, 'S5_01D', 'SH57_99') == 'X'
+
+
+def test_post_to_post_movements_share_track_and_berthing():
+    """CO has no track circuits, SH no berthing in the TOC: both take the S movement's."""
+    from rax_disp_logic_optimised.processing.locking import co_track_circuits
+    from helpers import make_toc
+    toc = make_toc([
+        dict(FROM='S21', TO='S31', UN='01D', **{'RT-PT-N': '113/114N', 'RT-TC': '113T, 01AT, 01BT'}),
+        dict(FROM='CO21', TO='S31', UN='01D', **{'RT-PT-N': '113/114N', 'RT-TC': ''}),
+        dict(FROM='SH21', TO='SH31', UN='01D', **{'RT-PT-N': '113/114N', 'RT-TC': '113T'}),
+        # shunt with no S movement between its posts: berthing by line name
+        dict(FROM='SH40', TO='SH50', UN='05', **{'RT-PT-R': '131/132R', 'RT-TC': '131T'}),
+        dict(FROM='S7', TO='S9', UN='05', **{'RT-TC': '05AT, 05BT, 05CT'}),
+    ])
+    tc = co_track_circuits(toc).tolist()
+    assert tc[1] == '113T, 01AT, 01BT'
+    assert tc[2] == '113T, 01AT, 01BT'
+    assert tc[3] == '131T, 05AT, 05BT'          # T / AT / BT only, not 05CT
+
+
+def test_shunt_locks_against_movement_on_its_berthing():
+    ltoc, vv, _, _ = run_pipeline([
+        dict(FROM='S21', TO='S31', UN='01D', **{'RT-PT-N': '113/114N', 'RT-TC': '113T, 01AT, 01BT'}),
+        dict(FROM='SH21', TO='SH31', UN='01D', **{'RT-PT-N': '113/114N', 'RT-TC': '113T'}),
+        dict(FROM='SH38', TO='SH30', UN='01M', **{'RT-PT-R': '139/140R', 'RT-TC': '140T, 139T, 01BT'}),
+    ])
+    assert conflicts(vv, 'SH21_01D', 'SH38_01M')       # meet on berthing 01BT

@@ -182,7 +182,9 @@ def _write_iso_report(path: str, iso, ltoc: pd.DataFrame, sqsh_iso: pd.DataFrame
                  'overlap would need both to overshoot (double overshoot) and is ignored. '
                  'An overshoot that only runs on along the other route in its direction '
                  'meets no criss-cross point (rear-end); it is considered only when '
-                 'option 15 is YES.'),
+                 'option 15 is YES. The overshoot also runs back over the movements '
+                 'into the opposite signal of the same berthing line (S30 / S31 share '
+                 '01AT, 01BT: S21 -> S31 backwards, then S3 -> S21 backwards).'),
         ('ISO-PT-N / ISO-PT-R', 'all isolation points of the movement (TOC, added, conditional). '
                                 '#<point># with <movements> = conditional: locked in that position '
                                 'only while one of those movements is set as well'),

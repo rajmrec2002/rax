@@ -106,6 +106,15 @@ Facing points send it the way they lie, trailing points let it through. A
 meeting counts only if the criss-cross point is within option 14 (metres from
 the next stop signal, measured with the chainage file).
 
+**Shared berthing.** The overshoot also follows movements backwards. The next
+stop signal (S30, UP) and the opposite signal at the other end of the same
+berthing line (S31, DN) share the berthing 01AT, 01BT. The DN movement S21 →
+S31 came in over the track the UP overshoot runs out on. So CO38 → S30 is also
+taken past S30 over S21 → S31 backwards (124T, 123T, 118T, 113T), even though
+the TOC has no S30 → S21 movement. It then continues backwards over S3 → S21
+into S3's train, with the criss-cross point at PT113. A backward path is used
+only where the layout links each track circuit to the next.
+
 Where that overshoot reaches another movement's **route**, the tool picks a
 facing point outside both routes and overlaps to lock the other way. It chooses
 the point that locks the fewest other movements:

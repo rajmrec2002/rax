@@ -1,5 +1,35 @@
 # Changes
 
+## 3.1.0 – shared berthing: overshoot runs back over opposite movements
+
+* **New principle.** The next stop signal (S30, UP) and the opposite signal
+  at the other end of the same berthing line (S31, DN) share the berthing
+  01AT, 01BT. The DN movements into S31 (S21 → S31) came in over the track an
+  UP overshoot past S30 runs out on. So the overshoot also follows them
+  backwards, which covers an S30 → S21 movement the TOC does not have. It
+  then continues backwards over the movements into the signal it passes
+  (S3 → S21). It runs in the overshooting train's direction, so facing and
+  trailing points are judged that way.
+  * GRF: CO38_01D against S3_DMABM1 / S3_DMABM2 is now found. The path is
+    01BT-124T-123T-118T-113T-DMBT, with the criss-cross point at PT113,
+    572 m from S30. Isolation is 123/124N. This pair is only found when
+    option 14 is above 572 m or blank.
+  * GRF with no distance limit: 29 more pairs reach each other. 54 pairs
+    that were rear-end only now also have a crossing path. At 120 m GRF is
+    unchanged, because no backward meeting is that close. ADI (no chainage
+    file) at 120 m: 6,531 pairs isolated, up from 6,170.
+  * A backward path is used only where the layout links each track circuit
+    to the next. A route listed out of running order (e.g. SH28_JKCL2D) gives
+    none.
+* **Berthing order.** 01AT, 01BT are listed in the same order in both
+  directions, which made the point track circuit next to a berthing line
+  look like it had one neighbour too many (a tie, so "check layout"). The
+  berthing line now counts as one neighbour there. GRF: the 107 "check
+  layout" pairs are now decided, all isolated. No other result changes.
+* Isolation runs faster (ADI with no distance limit: 60 s, was 240 s).
+  S, SH and CO movements with the same track are followed once.
+
+
 ## 3.0.0 – rear-end option, final polish
 
 * **Option 15 – Isolation: consider rear-end movements? (default NO).**

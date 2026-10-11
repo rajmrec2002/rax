@@ -293,3 +293,26 @@ def test_track_circuit_of_calling_on_signal_is_not_running_track():
     assert r['S5_1'].rt_seq == ['205T', '01AT']
     assert r['CO5_1'].rt_seq == ['205T', '01AT']
     assert r['S7_2'].rt_seq == ['207T', 'CO9T']
+
+
+def test_overshoot_runs_back_over_movements_onto_the_shared_berthing():
+    # GRF CO38 -> S30 / S3 -> S21: no movement S30 -> S21 in the TOC, but the
+    # DN movement S21 -> S31 berths on the same line (01AT, 01BT) as the UP
+    # shunt to S30, so the shunt's overshoot can run back over its track
+    # (124T, 123T, 113T) and on, back over S3 -> S21, into S3's train.
+    rows = [
+        dict(FROM='S21', TO='S31', UN='1', **{'RT-PT-R': '123/124R',
+                                               'RT-TC': '113T, 123T, 124T, 01AT, 01BT',
+                                               'OV-TC': '139T'}),
+        dict(FROM='S21', TO='S39', UN='2', **{'RT-PT-N': '123/124N',
+                                               'RT-TC': '113T, 123T, 02AT, 02BT', 'OV-TC': '140T'}),
+        dict(FROM='S3', TO='S21', UN='9', **{'RT-TC': '3AT, DMAT, DMBT', 'OV-TC': '113T'}),
+        dict(FROM='SH38', TO='S30', UN='1', **{'RT-TC': '139T, 01BT, 01AT'}),
+    ]
+    # no chainage: chaining past the first movement needs distance=None
+    res, _ = _run(rows, distance=None)
+    row = _row(res, 'SH38_1', 'S3_9')
+    assert row is not None and row['RESULT'] == 'isolated'
+    assert row['ISOLATION POINTS'] == '123/124N'
+    path = row['OVERSHOOT PATH (track circuits)']
+    assert 'S21_1 backwards' in path and '124T-123T-113T-DMBT' in path

@@ -19,6 +19,14 @@ movements.
   signal (chainage file).  Without a chainage the distance cannot be
   measured: only the movements from the next signal's post are followed
   and every meeting on them counts.
+* Shared berthing: the next stop signal (S30, UP) and the opposite signal
+  at the other end of the same berthing line (S31, DN) share its berthing
+  track circuits (01AT, 01BT).  The DN movements into S31 (S21 -> S31) came
+  in over the track the UP overshoot runs out on, so it also follows them
+  backwards (S30 -> S21, a movement the TOC does not have), and on
+  backwards over the movements into the signal it passes (S3 -> S21).  A
+  backward path is used only where the layout links each track circuit to
+  the next (route lists out of running order give none).
 
 A pair needs isolation when one movement's overshoot reaches the other
 movement's ROUTE.  Reaching only the other's overlap would need that train
@@ -64,6 +72,8 @@ are the legs.  A track circuit has two neighbours, plus one for each point
 end in it.  Where the TOC implies more, the links given by fewer routes are
 set aside and listed in LAYOUT CHECK; only where that cannot be decided (a
 tie) are pairs that depend on it reported for checking, not changed.
+Berthing track circuits are listed in either order (01AT, 01BT in both
+directions), so next to a point the berthing line counts as one neighbour.
 """
 
 import itertools
@@ -71,12 +81,12 @@ import logging
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from typing import Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import Dict, FrozenSet, List, Optional, Sequence, Set, Tuple
 
 import pandas as pd
 
 from ..core.constants import RE_TRACK_CIRCUIT
-from .locking import _has_alnum, co_track_circuits, post_key
+from .locking import _berthing_of, _has_alnum, co_track_circuits, post_key
 from .point_format import iso_join, iso_split, parse_iso
 
 logger = logging.getLogger(__name__)
@@ -149,6 +159,20 @@ class Layout:
     role: Dict[Tuple[Edge, str], str] = field(default_factory=dict)   # (edge, point) -> toe/N/R
     doubtful: Set[str] = field(default_factory=set)
     checks: List[tuple] = field(default_factory=list)
+    line: Dict[str, str] = field(default_factory=dict)        # berthing TC -> its line
+
+    def linked(self, a: str, b: str) -> bool:
+        """Track circuits next to each other (a berthing line counts as one)."""
+        if b in self.adj.get(a, ()):
+            return True
+        la, lb = self.line.get(a), self.line.get(b)
+        if la is not None and la == lb:
+            return True
+        members: Dict[str, Set[str]] = defaultdict(set)
+        for t, g in self.line.items():
+            members[g].add(t)
+        bb = members[lb] if lb else {b}
+        return any(self.adj.get(t, set()) & bb for t in (members[la] if la else [a]))
 
 
 def _routes(ltoc: pd.DataFrame) -> List[_Route]:
@@ -239,6 +263,19 @@ def build_layout(routes: List[_Route]) -> Layout:
             for p in lay.tc_pts.get(a, set()) | lay.tc_pts.get(b, set()):
                 seen[(e, p)].add(r.pos.get(p, '?'))
 
+    # berthing track circuits of one line (01AT, 01BT) are listed in any order
+    line = lay.line
+    for r in routes:
+        b = _berthing_of(r.rt_seq)
+        if len(b) > 1:
+            ids = {line.get(t, t) for t in b}
+            new = min(ids)
+            for t, g in list(line.items()):
+                if g in ids:
+                    line[t] = new
+            for t in b:
+                line[t] = new
+
     # prune impossible neighbour counts (out-of-order TC lists)
     nbrs: Dict[str, Set[str]] = defaultdict(set)
     for e in support:
@@ -248,16 +285,23 @@ def build_layout(routes: List[_Route]) -> Layout:
     for node, ns in nbrs.items():
         # plain track: 2 neighbours; each point end in the track circuit adds a leg
         limit = 2 + len(set(_point_ends(node)))
-        if len(ns) > limit:
-            ranked = sorted(ns, key=lambda n: (-support[frozenset((node, n))], n))
-            keep_n = support[frozenset((node, ranked[limit - 1]))]
-            weak = [n for n in ranked[limit:] if support[frozenset((node, n))] < keep_n]
+        # next to a point: the berthing line beyond counts once (01AT, 01BT
+        # listed in either order); on the berthing line itself the routes
+        # vote on its order as for any track circuit
+        units: Dict[str, List[str]] = defaultdict(list)
+        for n in ns:
+            units[n if node in line else line.get(n, n)].append(n)
+        if len(units) > limit:
+            sup = {u: max(support[frozenset((node, n))] for n in m) for u, m in units.items()}
+            ranked = sorted(units, key=lambda u: (-sup[u], u))
+            keep_n = sup[ranked[limit - 1]]
+            weak = [u for u in ranked[limit:] if sup[u] < keep_n]
             if len(ranked) - len(weak) > limit:
                 weak = ranked[limit:]               # cannot rank: a tie
                 lay.doubtful.add(node)              # -> pairs relying on it are held back
             # else the extra links are clearly outvoted by the other routes:
             # set aside and listed for correcting the TOC, results not held back
-            for n in weak:
+            for n in (t for u in weak for t in units[u]):
                 e = frozenset((node, n))
                 dropped.add(e)
                 lay.checks.append((
@@ -322,28 +366,61 @@ class _Overshoot:
 
 
 def _overshoot_paths(lay: Layout, r: _Route, by_post: Dict[str, List[_Route]],
-                     dist_from: callable, limit: Optional[float]) -> List[_Overshoot]:
+                     dist_from: callable, limit: Optional[float],
+                     into_post: Optional[Dict[str, List[_Route]]] = None,
+                     routes: Sequence[_Route] = ()) -> List[_Overshoot]:
     """
     Overshoot of movement r past its next stop signal, along the movements
     that can start from that signal's post and onwards (see module notes).
     A movement with an overlap stays within its overlap (none listed).
+
+    Shared berthing: the next stop signal (S30, UP) and the opposite signal
+    at the other end of the same berthing line (S31, DN) share the berthing
+    (01AT, 01BT).  The DN movements into S31 (S21 -> S31) came in over the
+    track the UP overshoot runs out on, so they are followed backwards too
+    (S30 -> S21 has no route in the TOC but the track is there), and on
+    backwards along the movements into the signal reached (S3 -> S21).
     """
     if r.has_ov or len(r.rt_seq) < 2:
         return []           # overlap = the overshoot; or running direction unknown
+    into_post = into_post or {}
+    opp = {'UP': 'DN', 'DN': 'UP'}.get(r.dir)
     out: List[_Overshoot] = []
-    # state: signal reached, node, came from, nodes, steps, via, signals seen
-    stack = [(r.to, r.rt_seq[-1], r.rt_seq[-2], (), (), (), {r.to})]
+    # state: signal reached, backwards?, berthing there, node, came from,
+    #        nodes, steps, via, signals seen
+    stack = [(r.to, False, set(_berthing_of(r.rt_seq)), r.rt_seq[-1], r.rt_seq[-2],
+              (), (), (), {r.to})]
     while stack:
-        sig, node, came, nodes, steps, via, seen = stack.pop()
-        for c in by_post.get(post_key(sig), ()):
+        sig, back, berth, node, came, nodes, steps, via, seen = stack.pop()
+        cands: List[Tuple[_Route, bool]] = []
+        if not back:
+            cands += [(c, False) for c in by_post.get(post_key(sig), ())]
+            if opp and berth:           # opposite movements onto the same berthing
+                cands += [(c, True) for c in routes if c.dir == opp
+                          and berth & set(_berthing_of(c.rt_seq))]
+        elif opp:                       # on backwards: movements into the signal passed
+            cands += [(c, True) for c in into_post.get(post_key(sig), ()) if c.dir == opp]
+        done = set()
+        for c, rev in cands:
             if not c.rt_seq or c.name == r.name:
                 continue
+            tcs = list(reversed(c.rt_seq)) if rev else list(c.rt_seq)
+            if rev and not back:
+                tcs = [t for t in tcs if t not in berth]    # already on the berthing
+            dup = (rev, tuple(tcs), post_key(c.frm if rev else c.to),
+                   tuple(sorted(c.rt_pos.items())))
+            if dup in done:
+                continue                # CO / SH with the same track as the S movement
+            done.add(dup)
             cur, prev = node, came
             n2, s2, ok = list(nodes), list(steps), True
             direction = r.dir if r.dir in ('UP', 'DN') else c.dir
-            for tc in c.rt_seq:
+            for tc in tcs:
                 if tc == cur:
                     continue
+                if rev and not lay.linked(cur, tc):
+                    ok = False          # backwards needs the layout: TCs listed out of order
+                    break
                 n2.append(tc)
                 need = []
                 ends_here = set(_point_ends(tc))
@@ -362,14 +439,16 @@ def _overshoot_paths(lay: Layout, r: _Route, by_post: Dict[str, List[_Route]],
                 prev, cur = cur, tc
             if not ok or not n2:
                 continue
-            ov = _Overshoot(via + (c.name,), tuple(n2), tuple(s2))
+            ov = _Overshoot(via + (c.name + (' backwards' if rev else ''),), tuple(n2), tuple(s2))
             out.append(ov)
-            d = dist_from(c.to)
+            nxt = c.frm if rev else c.to
+            d = dist_from(nxt)
             # chain on only while the next signal is known to be within the
             # distance (no chainage: only the movements from the next post)
-            if (len(ov.via) < MAX_CHAIN and c.to not in seen
+            if (len(ov.via) < MAX_CHAIN and nxt not in seen
                     and (limit is None or (d is not None and d <= limit))):
-                stack.append((c.to, cur, prev, ov.nodes, ov.steps, ov.via, seen | {c.to}))
+                stack.append((nxt, rev, set(_berthing_of(c.rt_seq)), cur, prev,
+                              ov.nodes, ov.steps, ov.via, seen | {nxt}))
     return out
 
 
@@ -444,9 +523,12 @@ def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
     names = [r.name for r in routes]
     lay = build_layout(routes)
     by_post: Dict[str, List[_Route]] = defaultdict(list)
+    into_post: Dict[str, List[_Route]] = defaultdict(list)
     for r in routes:
         if post_key(r.frm):
             by_post[post_key(r.frm)].append(r)
+        if post_key(r.to):
+            into_post[post_key(r.to)].append(r)
 
     from .criss_cross import _resolve_ch, load_chainage
     import math
@@ -486,8 +568,8 @@ def find_isolation(ltoc: pd.DataFrame, sqsh: pd.DataFrame,
 
     if distance is not None and ch is None:
         logger.info('Isolation: no chainage file, every overshoot meeting counts')
-    paths = {r.name: _overshoot_paths(lay, r, by_post,
-                                      lambda s, r=r: dist(r.to, s), distance) for r in routes}
+    paths = {r.name: _overshoot_paths(lay, r, by_post, lambda s, r=r: dist(r.to, s), distance,
+                                      into_post, routes) for r in routes}
     reach = {n: {pn for ov in paths[n] for pn in ov.nodes} for n in names}
 
     added: Dict[str, Dict[str, str]] = defaultdict(dict)        # route -> {point: pos}

@@ -11,11 +11,14 @@ import traceback
 from time import strftime
 from typing import Optional
 
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, Slot
-from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath
+from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, Signal, QObject, Slot
+from PySide6.QtGui import (
+    QAction, QActionGroup, QColor, QFont, QFontMetrics, QIcon, QKeySequence, QPainter,
+    QPainterPath,
+)
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-    QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
+    QFrame, QGridLayout, QHBoxLayout, QInputDialog, QLabel, QLineEdit, QMainWindow,
     QMessageBox, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
@@ -58,6 +61,11 @@ _BTN_CLO   = '#dc2626';  _BTN_CLO_HOV  = '#b91c1c'
 _FILE_FILTER = ('CSV files (*.csv);;Excel files (*.xlsx);;'
                 'XLS files (*.xls);;PDF files (*.pdf);;All files (*.*)')
 _SAVE_FILTER = 'CSV files (*.csv);;Excel files (*.xlsx);;All files (*.*)'
+
+_SETTINGS_DIR = os.path.expanduser('~/.rax-logic')
+_LAST_SESSION = os.path.join(_SETTINGS_DIR, 'last_session.txt')
+_TEXT_SIZES = [('Small', 10), ('Normal', 11), ('Large', 13), ('Extra large', 15)]
+_NO_PATH = '..............................'
 
 
 class PillProgressBar(QWidget):
@@ -120,12 +128,11 @@ class RaxLogicApp(QMainWindow):
 
         self.fp1 = self.fp_ch = self.fpvv = self.save_dir = ''
         self.path_347 = self.path_516 = self.path1 = self.path2 = ''
-
-        scr = QApplication.primaryScreen().availableGeometry()
-        w = max(400, int(scr.width()  * 0.60))
-        h = max(300, int(scr.height() * 0.60))
+        # app preferences (Settings menu), kept by Qt per user
+        self._prefs = QSettings('RaxLogic', 'PhysicalProgressModule')
+        self._pt = int(self._prefs.value('text_size', 11))
+        self._alt_alone = False
         self.setMinimumSize(400, 300)
-        self.resize(w, h)
 
         self._wsig = _WorkerSignals()
         self._wsig.pb_value.connect(lambda v: self.pb.setValue(v))
@@ -141,28 +148,38 @@ class RaxLogicApp(QMainWindow):
         self._job_timer.timeout.connect(self._poll_job)
         self._remote_stop = threading.Event()
         self._build_ui()
+        self._build_menu()
         self._apply_styles()
+        self._fit_window()
+        if self._pref_bool('remember_last') and os.path.isfile(_LAST_SESSION):
+            try:
+                self._apply_settings(read_settings(_LAST_SESSION))
+            except Exception as e:
+                debug_print(f'[WARN] last session not loaded: {e}')
+        QApplication.instance().installEventFilter(self)
 
     # ── Stylesheet ─────────────────────────────────────────────────────────
 
     def _apply_styles(self):
+        pt = self._pt
         self.centralWidget().setStyleSheet(f"""
             QWidget#bg   {{ background: {_BG}; }}
             QWidget#card {{ background: {_PANEL}; }}
-            QWidget#bg   {{ font-family: 'Segoe UI'; font-size: 11pt; }}
-            QWidget#card {{ font-family: 'Segoe UI'; font-size: 11pt; }}
+            QWidget#bg   {{ font-family: 'Segoe UI'; font-size: {pt}pt; }}
+            QWidget#card {{ font-family: 'Segoe UI'; font-size: {pt}pt; }}
             QWidget#bg   QLabel {{ background: transparent; color: {_BODY_FG}; }}
             QWidget#card QLabel {{ background: transparent; color: {_BODY_FG}; }}
+            QLabel#path {{ color: {_MUTED_FG}; font-size: {max(pt - 1, 8)}pt; }}
             QLineEdit {{
                 background: {_PANEL}; border: 1px solid #94a3b8;
                 border-radius: 3px; padding: 2px 6px;
-                color: {_BODY_FG}; font-family: 'Segoe UI'; font-size: 11pt;
+                color: {_BODY_FG}; font-family: 'Segoe UI'; font-size: {pt}pt;
             }}
             QLineEdit:focus {{ border: 2px solid {_NUM_FG}; padding: 1px 5px; }}
             QComboBox {{
                 background: {_PANEL}; border: 1px solid #94a3b8;
                 border-radius: 3px; padding: 2px 6px;
-                color: {_BODY_FG}; font-family: 'Segoe UI'; font-size: 11pt;
+                color: {_BODY_FG}; font-family: 'Segoe UI'; font-size: {pt}pt;
             }}
             QComboBox:focus {{ border: 2px solid {_NUM_FG}; padding: 1px 5px; }}
             QComboBox::drop-down {{
@@ -177,14 +194,49 @@ class RaxLogicApp(QMainWindow):
             QWidget#bg   QPushButton,
             QWidget#card QPushButton {{
                 border: 1px solid transparent; border-radius: 3px; padding: 3px 8px;
-                font-weight: bold; font-family: 'Segoe UI'; font-size: 11pt;
+                font-weight: bold; font-family: 'Segoe UI'; font-size: {pt}pt;
                 background: {_BTN_SEC}; color: {_BODY_FG};
             }}
             QWidget#bg   QPushButton:hover,
             QWidget#card QPushButton:hover {{
                 background: {_BTN_SEC_HOV}; border-color: #94a3b8;
             }}
+            QScrollArea {{ border: none; background: {_BG}; }}
         """)
+        self.menuBar().setStyleSheet(f"""
+            QMenuBar {{ background: {_HDR1}; color: #f8fafc; font-size: {pt}pt; }}
+            QMenuBar::item {{ padding: 4px 10px; background: transparent; }}
+            QMenuBar::item:selected {{ background: {_HDR2}; }}
+            QMenu {{ font-size: {pt}pt; }}
+        """)
+        self._fix_row_heights()
+
+    def _fix_row_heights(self):
+        """
+        Every input row keeps at least the height of its text.  Without this
+        a short window squeezed the rows until the text was cut in half; now
+        the form scrolls instead.
+        """
+        fm = QFontMetrics(QFont('Segoe UI', self._pt))
+        h = fm.height() + 12
+        root = self.centralWidget()
+        for w in root.findChildren(QLineEdit) + root.findChildren(QComboBox):
+            w.setMinimumHeight(h)
+        for b in root.findChildren(QPushButton):
+            b.setMinimumHeight(h)
+        for lbl in root.findChildren(QLabel):
+            lbl.setMinimumHeight(fm.height() + 2)
+        for g in root.findChildren(QGridLayout):
+            g.setVerticalSpacing(max(4, self._pt // 2 - 1))
+
+    def _fit_window(self):
+        """Open tall enough to show the whole form, as far as the screen allows."""
+        scr = QApplication.primaryScreen().availableGeometry()
+        need = (self._cards.sizeHint().height() + self._banner.sizeHint().height()
+                + (self.menuBar().sizeHint().height() if self.menuBar().isVisible() else 0) + 8)
+        w = max(400, int(scr.width() * 0.60))
+        h = max(300, min(need, int(scr.height() * 0.95)))
+        self.resize(w, h)
 
     # ── UI construction ───────────────────────────────────────────────────
 
@@ -194,9 +246,11 @@ class RaxLogicApp(QMainWindow):
         root_lay = QVBoxLayout(root_w)
         root_lay.setContentsMargins(0, 0, 0, 0)
         root_lay.setSpacing(0)
-        root_lay.addWidget(self._make_banner())
+        self._banner = self._make_banner()
+        root_lay.addWidget(self._banner)
 
         cards_w = QWidget(); cards_w.setObjectName('bg')
+        self._cards = cards_w
         cards_lay = QVBoxLayout(cards_w)
         cards_lay.setContentsMargins(8, 4, 8, 4)
         cards_lay.setSpacing(4)
@@ -206,11 +260,14 @@ class RaxLogicApp(QMainWindow):
         _, cf_g = self._make_card(cards_lay, 'Criss-Cross Settings',  _HDR3)
         _, af_g = self._make_card(cards_lay, 'Run & Open Outputs',    _HDR4)
 
-        cards_lay.setStretch(0, 2)
-        cards_lay.setStretch(1, 3)
-        cards_lay.setStretch(2, 1)
-        cards_lay.setStretch(3, 1)
-        root_lay.addWidget(cards_w, 1)
+        cards_lay.addStretch(1)
+        # the form scrolls when the window is short (rows keep their height)
+        scroll = QScrollArea(); scroll.setObjectName('bg')
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setWidget(cards_w)
+        root_lay.addWidget(scroll, 1)
 
         self._populate_file_card(ff_g)
         self._populate_signal_card(sf_g)
@@ -289,8 +346,8 @@ class RaxLogicApp(QMainWindow):
         return QLabel(text)
 
     def _path_lbl(self) -> QLabel:
-        l = QLabel('..............................')
-        l.setStyleSheet(f'color: {_MUTED_FG}; font-size: 10pt;')
+        l = QLabel(_NO_PATH)
+        l.setObjectName('path')
         l.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         return l
 
@@ -488,6 +545,186 @@ class RaxLogicApp(QMainWindow):
         sl.addWidget(self.btn_login)
         g.addWidget(srv_w, 4, 0, 1, 5)
 
+    # ── Menu bar (Alt shows / hides it) ───────────────────────────────────
+
+    def _pref_bool(self, key: str, default: bool = False) -> bool:
+        v = self._prefs.value(key, default)
+        return v in (True, 'true', '1', 1)
+
+    def _act(self, menu, text, slot, shortcut=None, tip=''):
+        a = QAction(text, self)
+        a.triggered.connect(lambda _=False: slot())
+        if shortcut:
+            a.setShortcut(QKeySequence(shortcut))
+            a.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+            self.addAction(a)                   # works while the menu bar is hidden
+        if tip:
+            a.setStatusTip(tip); a.setToolTip(tip)
+        menu.addAction(a)
+        return a
+
+    def _build_menu(self):
+        mb = self.menuBar()
+        m = mb.addMenu('&File')
+        self._act(m, '&Open TOC file…', self.get_toc_loc, 'Ctrl+O')
+        self._act(m, 'Output &folder…', self.get_save_loc)
+        self._act(m, '&Chainage file…', self.get_ch_loc)
+        self._act(m, 'Corrected &VV square sheet…', self.get_vv_loc)
+        m.addSeparator()
+        self._act(m, '&Load settings…', self.load_settings, 'Ctrl+L')
+        self._act(m, '&Save settings', self.save_settings, 'Ctrl+S')
+        self._act(m, 'Open settings &folder', self._open_settings_dir)
+        m.addSeparator()
+        self._act(m, '&Reset all fields', self.reset)
+        self._act(m, 'E&xit', self.close, 'Ctrl+Q')
+
+        m = mb.addMenu('&Run')
+        self._act(m, '&Generate TOC', self.start_gen_toc, 'Ctrl+G')
+        self._act(m, '&Run function', self.start_generate_disp, 'F5')
+        self._act(m, '&Stop', self.stop_job)
+        m.addSeparator()
+        for txt, attr in [('Open Disp &3.47', 'path_347'), ('Open Disp &5.16', 'path_516'),
+                          ('Open S&quare Sheet', 'path1'), ('Open &New TOC', 'path2')]:
+            self._act(m, txt, lambda a=attr: self.open_file(getattr(self, a)))
+
+        m = mb.addMenu('&Settings')
+        sz = m.addMenu('&Text size')
+        grp = QActionGroup(self); grp.setExclusive(True)
+        for name, pt in _TEXT_SIZES:
+            a = QAction(f'{name} ({pt} pt)', self, checkable=True)
+            a.setChecked(pt == self._pt)
+            a.triggered.connect(lambda _=False, p=pt: self._set_text_size(p))
+            grp.addAction(a); sz.addAction(a)
+        self._act_menu_always = QAction('Always show this &menu bar', self, checkable=True)
+        self._act_menu_always.setChecked(self._pref_bool('menu_always'))
+        self._act_menu_always.toggled.connect(self._set_menu_always)
+        m.addAction(self._act_menu_always)
+        self._act_remember = QAction('&Remember fields when closing', self, checkable=True)
+        self._act_remember.setChecked(self._pref_bool('remember_last'))
+        self._act_remember.setToolTip('Fill in the fields of the last session when the app starts')
+        self._act_remember.toggled.connect(
+            lambda on: self._prefs.setValue('remember_last', bool(on)))
+        m.addAction(self._act_remember)
+        m.addSeparator()
+        srv = m.addMenu('S&erver')
+        self._act(srv, 'Server &address…', self._edit_server)
+        self._act(srv, '&Log in…', lambda: self._ensure_login(force=True))
+        self._act(srv, 'Log &out', self._server_logout)
+        self._act(srv, '&Who am I', self._server_whoami)
+
+        m = mb.addMenu('&Help')
+        self._act(m, '&Keyboard shortcuts', self._show_shortcuts, 'F1')
+        self._act(m, '&About', self._show_about)
+
+        mb.triggered.connect(lambda _a: self._hide_menu_soon())
+        mb.setVisible(self._pref_bool('menu_always'))
+
+    def eventFilter(self, obj, ev):
+        """Alt pressed and released on its own shows / hides the menu bar."""
+        t = ev.type()
+        if t == QEvent.Type.KeyPress:
+            if ev.key() == Qt.Key.Key_Alt and not ev.isAutoRepeat():
+                self._alt_alone = True
+            elif ev.key() != Qt.Key.Key_Alt:
+                self._alt_alone = False
+        elif t == QEvent.Type.KeyRelease and ev.key() == Qt.Key.Key_Alt \
+                and not ev.isAutoRepeat() and self._alt_alone:
+            self._alt_alone = False             # the release reaches several widgets
+            if QApplication.activeWindow() is self:
+                self._toggle_menu()
+        elif t == QEvent.Type.MouseButtonPress:
+            self._alt_alone = False
+        return False
+
+    def _toggle_menu(self):
+        mb = self.menuBar()
+        if mb.isVisible() and not self._act_menu_always.isChecked():
+            mb.hide()
+        elif not mb.isVisible():
+            mb.show()
+            acts = mb.actions()
+            if acts:
+                mb.setActiveAction(acts[0])     # File opens; arrows move along
+                mb.setFocus()
+
+    def _hide_menu_soon(self):
+        if not self._act_menu_always.isChecked():
+            QTimer.singleShot(0, self.menuBar().hide)
+
+    def _set_menu_always(self, on: bool):
+        self._prefs.setValue('menu_always', bool(on))
+        self.menuBar().setVisible(bool(on))
+
+    def _set_text_size(self, pt: int):
+        self._pt = int(pt)
+        self._prefs.setValue('text_size', self._pt)
+        self._apply_styles()
+
+    def _open_settings_dir(self):
+        os.makedirs(_SETTINGS_DIR, exist_ok=True)
+        self.open_file(_SETTINGS_DIR)
+
+    def _edit_server(self):
+        url, ok = QInputDialog.getText(
+            self, 'Server address',
+            'Rax Logic server, e.g. http://10.0.0.5:8765\n(blank = run on this computer)',
+            QLineEdit.EchoMode.Normal, self.e_server.text())
+        if ok:
+            self.e_server.setText(url.strip())
+
+    def _server_logout(self):
+        from ..client.api import RaxClient, ServerError
+        server = self.e_server.text().strip()
+        if not server:
+            QMessageBox.information(self, 'Log out', 'No server in "Run on server".')
+            return
+        try:
+            RaxClient(server, timeout=15).logout()
+            QMessageBox.information(self, 'Log out', f'Logged out of {server}.')
+        except ServerError as e:
+            QMessageBox.warning(self, 'Log out', f'Logged out on this PC.\n({e})')
+
+    def _server_whoami(self):
+        from ..client.api import LoginRequired, RaxClient, ServerError
+        server = self.e_server.text().strip()
+        if not server:
+            QMessageBox.information(self, 'Server', 'No server in "Run on server": '
+                                                    'jobs run on this computer.')
+            return
+        try:
+            c = RaxClient(server, timeout=15)
+            if not c.health().get('login_required'):
+                msg = f'{c.base} needs no login.'
+            else:
+                who = c.me()
+                msg = (f'{c.base}\nLogged in as {who.get("uid") or who.get("name")}'
+                       f'{" (" + who["name"] + ")" if who.get("uid") and who.get("name") else ""}'
+                       f'{", administrator" if who.get("admin") else ""}.')
+        except LoginRequired:
+            msg = f'{server}\nNot logged in (Settings → Server → Log in).'
+        except ServerError as e:
+            msg = str(e)
+        QMessageBox.information(self, 'Server', msg)
+
+    def _show_shortcuts(self):
+        QMessageBox.information(self, 'Keyboard shortcuts', (
+            'Alt\tshow / hide the menu bar\n'
+            'Ctrl+O\topen TOC file\n'
+            'Ctrl+L\tload settings\n'
+            'Ctrl+S\tsave settings\n'
+            'Ctrl+G\tgenerate TOC\n'
+            'F5\trun function\n'
+            'F1\tthis list\n'
+            'Ctrl+Q\texit'))
+
+    def _show_about(self):
+        from .. import __version__
+        QMessageBox.about(self, 'About Rax Logic', (
+            f'<b>Rax Logic – Physical Progress Module</b><br>version {__version__}<br><br>'
+            'Locking square sheet, criss-cross and 3.47 / 5.16 dispensation '
+            'documents from a station TOC.<br>'
+            f'Settings: {_SETTINGS_DIR}'))
+
     # ── Event handlers ────────────────────────────────────────────────────
 
     @Slot()
@@ -540,7 +777,7 @@ class RaxLogicApp(QMainWindow):
         self.fp1 = self.fp_ch = self.fpvv = self.save_dir = ''
         self.path_347 = self.path_516 = self.path1 = self.path2 = ''
         for lbl in (self.lb_toc, self.lb_save, self.lb_ch, self.lb_vv):
-            lbl.setText('..............................')
+            lbl.setText(_NO_PATH)
         self.e_stn.clear()
         for e in self.e_hs + self.e_end:
             e.clear()
@@ -562,9 +799,17 @@ class RaxLogicApp(QMainWindow):
             QMessageBox.warning(self, 'Station Name Missing',
                                 'Please enter the station name (field 05) before saving.')
             return
-        base_dir = os.path.expanduser('~/.rax-logic')
-        os.makedirs(base_dir, exist_ok=True)
-        filepath = os.path.join(base_dir, f'{stn}_{strftime("%Y%m%d_%H%M%S")}.txt')
+        os.makedirs(_SETTINGS_DIR, exist_ok=True)
+        filepath = os.path.join(_SETTINGS_DIR, f'{stn}_{strftime("%Y%m%d_%H%M%S")}.txt')
+        try:
+            write_settings(filepath, self._collect_settings())
+            QMessageBox.information(self, 'Settings Saved',
+                                    f'Settings saved to:\n{filepath}')
+        except Exception as e:
+            QMessageBox.critical(self, 'Save Error',
+                                 f'Could not save settings:\n{e}')
+
+    def _collect_settings(self) -> dict:
         cfg = {
             'TOC_FILE': self.fp1, 'SAVE_DIR': self.save_dir,
             'CHAINAGE_FILE': self.fp_ch, 'VV_FILE': self.fpvv,
@@ -582,54 +827,48 @@ class RaxLogicApp(QMainWindow):
         for i, grp in enumerate('ABCD'):
             cfg[f'HS_{grp}'] = self.e_hs[i].text()
             cfg[f'END_{grp}'] = self.e_end[i].text()
-        try:
-            write_settings(filepath, cfg)
-            QMessageBox.information(self, 'Settings Saved',
-                                    f'Settings saved to:\n{filepath}')
-        except Exception as e:
-            QMessageBox.critical(self, 'Save Error',
-                                 f'Could not save settings:\n{e}')
+        return cfg
 
     def load_settings(self):
-        base_dir = os.path.expanduser('~/.rax-logic')
         filepath, _ = QFileDialog.getOpenFileName(
-            self, 'Load Station Settings', base_dir,
+            self, 'Load Station Settings', _SETTINGS_DIR,
             'Settings files (*.txt);;All files (*.*)')
         if not filepath:
             return
         try:
-            cfg = read_settings(filepath)
-
-            if cfg.get('TOC_FILE') and os.path.isfile(cfg['TOC_FILE']):
-                self.fp1 = cfg['TOC_FILE']; self.lb_toc.setText(self.fp1)
-            if cfg.get('SAVE_DIR') and os.path.isdir(cfg['SAVE_DIR']):
-                self.save_dir = cfg['SAVE_DIR']; self.lb_save.setText(self.save_dir)
-            if cfg.get('CHAINAGE_FILE') and os.path.isfile(cfg['CHAINAGE_FILE']):
-                self.fp_ch = cfg['CHAINAGE_FILE']; self.lb_ch.setText(self.fp_ch)
-            if cfg.get('VV_FILE') and os.path.isfile(cfg['VV_FILE']):
-                self.fpvv = cfg['VV_FILE']; self.lb_vv.setText(self.fpvv)
-
-            self.e_stn.setText(cfg.get('STATION_NAME', ''))
-            for i, (hk, ek) in enumerate([('HS_A', 'END_A'), ('HS_B', 'END_B'),
-                                           ('HS_C', 'END_C'), ('HS_D', 'END_D')]):
-                self.e_hs[i].setText(cfg.get(hk, ''))
-                self.e_end[i].setText(cfg.get(ek, ''))
-            self.cb_lno.setCurrentText(cfg.get('BERTHING_LINES', '1'))
-            self.cb_vvm.setCurrentText(cfg.get('VV_SQSH', 'NO'))
-            self.cb_cc.setCurrentText(cfg.get('CRISS_CROSS', 'NO'))
-            self.cb_iso.setCurrentText(cfg.get('ISO_PREFERRED', 'YES') or 'YES')
-            self.e_iso_dist.setText(cfg.get('ISO_DISTANCE', '120'))
-            self.cb_iso_rear.setCurrentText(cfg.get('ISO_REAR_END', 'NO') or 'NO')
-            self.e_cc_min.setText(cfg.get('CC_MIN', '0'))
-            self.e_cc_max.setText(cfg.get('CC_MAX', '0'))
-            self.e_cc_bands.setText(cfg.get('CC_BANDS', ''))
-            self.e_server.setText(cfg.get('SERVER_URL', ''))
-
+            self._apply_settings(read_settings(filepath))
             QMessageBox.information(self, 'Settings Loaded',
                                     f'Settings loaded from:\n{os.path.basename(filepath)}')
         except Exception as e:
             QMessageBox.critical(self, 'Load Error',
                                  f'Could not load settings:\n{e}')
+
+    def _apply_settings(self, cfg: dict):
+        """Fill the fields from a settings dict (see core/settings.py)."""
+        if cfg.get('TOC_FILE') and os.path.isfile(cfg['TOC_FILE']):
+            self.fp1 = cfg['TOC_FILE']; self.lb_toc.setText(self.fp1)
+        if cfg.get('SAVE_DIR') and os.path.isdir(cfg['SAVE_DIR']):
+            self.save_dir = cfg['SAVE_DIR']; self.lb_save.setText(self.save_dir)
+        if cfg.get('CHAINAGE_FILE') and os.path.isfile(cfg['CHAINAGE_FILE']):
+            self.fp_ch = cfg['CHAINAGE_FILE']; self.lb_ch.setText(self.fp_ch)
+        if cfg.get('VV_FILE') and os.path.isfile(cfg['VV_FILE']):
+            self.fpvv = cfg['VV_FILE']; self.lb_vv.setText(self.fpvv)
+
+        self.e_stn.setText(cfg.get('STATION_NAME', ''))
+        for i, (hk, ek) in enumerate([('HS_A', 'END_A'), ('HS_B', 'END_B'),
+                                       ('HS_C', 'END_C'), ('HS_D', 'END_D')]):
+            self.e_hs[i].setText(cfg.get(hk, ''))
+            self.e_end[i].setText(cfg.get(ek, ''))
+        self.cb_lno.setCurrentText(cfg.get('BERTHING_LINES', '1'))
+        self.cb_vvm.setCurrentText(cfg.get('VV_SQSH', 'NO'))
+        self.cb_cc.setCurrentText(cfg.get('CRISS_CROSS', 'NO'))
+        self.cb_iso.setCurrentText(cfg.get('ISO_PREFERRED', 'YES') or 'YES')
+        self.e_iso_dist.setText(cfg.get('ISO_DISTANCE', '120'))
+        self.cb_iso_rear.setCurrentText(cfg.get('ISO_REAR_END', 'NO') or 'NO')
+        self.e_cc_min.setText(cfg.get('CC_MIN', '0'))
+        self.e_cc_max.setText(cfg.get('CC_MAX', '0'))
+        self.e_cc_bands.setText(cfg.get('CC_BANDS', ''))
+        self.e_server.setText(cfg.get('SERVER_URL', ''))
 
     def _ask_end_names_dialog(self, groups):
         active = [(gi, sigs) for gi, (sigs, _) in enumerate(groups)
@@ -1109,6 +1348,13 @@ class RaxLogicApp(QMainWindow):
                 event.ignore()
                 return
             self.stop_job()
+        if self._act_remember.isChecked():
+            try:
+                os.makedirs(_SETTINGS_DIR, exist_ok=True)
+                write_settings(_LAST_SESSION, self._collect_settings())
+            except Exception as e:
+                debug_print(f'[WARN] last session not saved: {e}')
+        QApplication.instance().removeEventFilter(self)
         event.accept()
 
 

@@ -126,6 +126,10 @@ In the desktop app:
 * The web page has the login at the top right.
 * Leave it blank to run on this PC. The run happens in a separate process,
   so the window stays responsive. **Stop** cancels a run.
+* Press **Alt** for the menu bar. **Settings** has the text size, "always
+  show the menu bar", "remember fields when closing" and the server login.
+  Shortcuts: Ctrl+O open TOC, Ctrl+S / Ctrl+L save / load settings,
+  Ctrl+G Gen TOC, F5 Run Fn, F1 help.
 
 ```bash
 rax-client login --server http://10.0.0.5:8765 --uid rx04361      # asks for the password

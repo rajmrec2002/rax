@@ -1,5 +1,35 @@
 # Changes
 
+## 3.2.2 – desktop app: no squeezed rows, Alt menu with settings
+
+* **Fixed: squeezed rows.** On a short window (or a wide, low screen) the
+  rows were squeezed until the text and the YES / NO boxes were cut in half.
+  Now every row keeps the height of its text and the form scrolls. The
+  window opens tall enough for the whole form when the screen allows.
+* **Menu bar on Alt.** Press and release Alt to show or hide the menu bar,
+  as in Windows programs:
+  * **File:** open TOC / output folder / chainage / VV file; load and save
+    settings; open the settings folder; reset; exit.
+  * **Run:** Generate TOC, Run function, Stop; open the 3.47, 5.16, square
+    sheet and new TOC outputs.
+  * **Settings:**
+    * **Text size** (small, normal, large, extra large);
+    * **Always show this menu bar**;
+    * **Remember fields when closing**: the next start fills them in again;
+    * **Server**: address, log in, log out, who am I.
+  * **Help:** keyboard shortcuts, about.
+* **Shortcuts** that work with the menu hidden:
+  * Ctrl+O open TOC
+  * Ctrl+L load settings
+  * Ctrl+S save settings
+  * Ctrl+G Gen TOC
+  * F5 Run Fn
+  * F1 shortcuts
+  * Ctrl+Q exit
+
+  Preferences are kept per user.
+
+
 ## 3.2.1 – .deb packages, install fix
 
 * **Fixed:** a client install as a normal user failed with `Cannot update

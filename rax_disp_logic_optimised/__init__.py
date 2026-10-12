@@ -5,5 +5,5 @@ A desktop application for TOC processing, locking analysis,
 and criss-cross movement computation for Indian Railway signaling.
 """
 
-__version__ = "3.2.1"
+__version__ = "3.2.2"
 __all__: list[str] = []

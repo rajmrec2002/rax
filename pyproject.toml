@@ -1,14 +1,14 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "rax-logic"
-version = "3.2.0"
+version = "3.2.1"
 description = "Rax Logic – Railway Physical Progress Module (locking, criss-cross and dispensation)"
 readme = "README.md"
 requires-python = ">=3.9"
-license = {text = "Proprietary"}
+license = "LicenseRef-Proprietary"
 authors = [{name = "Rax Development Team"}]
 
 # Core = the processing engine (needed by the desktop app and the server).

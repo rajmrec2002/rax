@@ -35,6 +35,34 @@ then runs `deploy/install.sh`. Press Enter to take the default in
 Copied on its own to a new machine, `setup.sh` offers to download the code
 with git. Run it as your normal user: it uses sudo only for the server parts.
 
+## .deb packages (Ubuntu / Debian)
+
+Build installable packages once, then install them on any number of PCs with
+no internet and no `~/rax` folder:
+
+```bash
+bash deploy/build-deb.sh            # or: client | server   [--out DIR] [--wheelhouse DIR]
+# -> dist/rax-logic-client_3.2.1_amd64.deb   desktop app + rax-client
+# -> dist/rax-logic-server_3.2.1_amd64.deb   server (systemd service rax-logic)
+
+sudo apt install ./dist/rax-logic-client_3.2.1_amd64.deb   # menu "Rax Logic", or: rax-logic
+sudo apt install ./dist/rax-logic-server_3.2.1_amd64.deb   # prints the first login ID + password
+sudo rax-logic-user add --name "SSE/Sig ADI"               # server: one account per person
+```
+
+* Use `apt install ./file.deb`, not `dpkg -i`: apt also installs the screen
+  libraries the desktop app needs.
+* A package contains a ready Python environment, so it is tied to the Python
+  version of the PC it was built on. Build on the same Ubuntu / Debian release
+  as the target PCs, e.g. build on 24.04 for 24.04 PCs.
+* To update, install the newer `.deb` the same way. To remove, run
+  `sudo apt remove rax-logic-client` (or `rax-logic-server`). `apt purge`
+  also deletes the server settings; jobs and accounts stay in
+  `/var/lib/rax-logic`.
+* The server package also puts the first login in
+  `/root/rax-logic-first-login.txt`. Delete it once noted.
+* `bash setup.sh` → **d** builds the packages too.
+
 ## Server (Linux, systemd)
 
 ```bash
@@ -109,6 +137,11 @@ rax-client run --toc ADI_TOC.xlsx --stn ADI --hs "S5,CO5=VIRAR" --hs "S6,S8=SBI"
 rax-client check-chainage --toc ADI_TOC.xlsx --chainage ADI_CH.xlsx
 rax-client jobs | status ID | download ID --out DIR | cancel ID
 ```
+
+If a client install stops with `Cannot update time stamp of directory
+'rax_logic.egg-info'`, update the code (`git pull`) and run it again. Since
+3.2.1 the installer builds from a clean copy, so files left in the folder by an
+earlier `sudo` install no longer get in the way.
 
 **Update** to the latest version. This pulls the code, reinstalls and restarts
 the service; settings, login accounts, port and jobs are kept:

@@ -295,10 +295,14 @@ client_installed && say "Client installed for $USER"
 
 opts=("i=install" "u=update what is installed")
 server_installed && opts+=("a=manage login accounts (server)")
-opts+=("r=remove" "q=quit")
+opts+=("r=remove" "d=build .deb packages (to install on other Ubuntu / Debian PCs)" "q=quit")
 choose "What do you want to do?" "${opts[@]}"
 case "$REPLY" in
   a) flow_users ;;
+  d) choose "Which package?" "b=both" "c=client (desktop app)" "s=server"
+     case "$REPLY" in c) w=client ;; s) w=server ;; *) w=both ;; esac
+     ask "Folder for the .deb files" "$SRC/dist"
+     bash "$SRC/deploy/build-deb.sh" "$w" --out "$REPLY" || die "building the packages failed" ;;
   i) choose "Install what?" "s=server (this Linux machine runs jobs for others, web page)" \
                             "c=client (desktop app / command line on this PC)" \
                             "b=both server and client on this machine"

@@ -50,7 +50,7 @@ def user_main(argv) -> int:
                   f'{" (administrator)" if a.admin else ""}.\n'
                   f'  Login ID: {uid}\n  Password: {pw}\n'
                   'Give these to the user. The password is shown only now; '
-                  f'if it is lost: rax-server user reset {uid}')
+                  f'if it is lost, make a new one with:  user reset {uid}')
         elif a.cmd == 'list':
             rows = store.list()
             if not rows:

@@ -1,5 +1,27 @@
 # Changes
 
+## 3.2.1 – .deb packages, install fix
+
+* **Fixed:** a client install as a normal user failed with `Cannot update
+  time stamp of directory 'rax_logic.egg-info'`. An earlier `sudo` server
+  install from the same folder had left root-owned build files there. The
+  installer now builds from a clean temporary copy of the source, and so
+  does `bundle`.
+* **`deploy/build-deb.sh`** builds Debian / Ubuntu packages:
+  * `rax-logic-client`: desktop app (menu entry, `rax-logic`) and
+    `rax-client`, in `/opt/rax-logic-client`.
+  * `rax-logic-server`: systemd service `rax-logic` on port 8765 (or the next
+    free one). It creates the first administrator login and shows it.
+    `sudo rax-logic-user add|list|reset|disable|enable|remove` manages
+    accounts.
+  * Each package carries a ready Python environment, so installing needs no
+    internet. Build on the same release as the target PCs. Install with
+    `sudo apt install ./file.deb`.
+  * Also in `setup.sh` (menu **d**).
+* `pyproject.toml`: the license is now an SPDX string, which removes the
+  setuptools deprecation warning; setuptools 77 or newer is needed to build.
+
+
 ## 3.2.0 – login ID and password per user, made by the server
 
 * **Login accounts.** The administrator creates an account on the server

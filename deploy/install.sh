@@ -51,14 +51,28 @@ need_python() {
   "$PY" -c 'import venv, ensurepip' 2>/dev/null || die "python3-venv is missing (Debian/Ubuntu: sudo apt install python3-venv)."
 }
 
-pip_install() {   # venv_dir  spec...
+clean_copy() {    # a clean copy of the source to build from, in a new temp folder
+  # (pip builds in the source folder; a root install would leave root-owned
+  #  rax_logic.egg-info / build there that a normal user cannot update)
+  local d; d="$(mktemp -d "${TMPDIR:-/tmp}/rax-src.XXXXXX")"
+  tar -C "$SRC" --exclude=.git --exclude='*.egg-info' --exclude=build --exclude=dist \
+      --exclude=__pycache__ --exclude=wheels -cf - . | tar -C "$d" -xf -
+  chmod 755 "$d"
+  echo "$d"
+}
+
+pip_install() {   # venv_dir  spec...   ("$SRC" in a spec means this source)
   local venv="$1"; shift
-  local opts=()
+  local opts=() b rc=0
   [[ -n "${WHEELHOUSE:-}" ]] && opts=(--no-index --find-links "$WHEELHOUSE")
-  "$venv/bin/python" -m pip install --upgrade "${opts[@]}" pip wheel setuptools >/dev/null
-  "$venv/bin/python" -m pip install --upgrade "${opts[@]}" "$@"
+  b="$(clean_copy)"
+  local specs=("${@//"$SRC"/"$b"}")
+  "$venv/bin/python" -m pip install --upgrade "${opts[@]}" pip wheel setuptools >/dev/null || rc=$?
+  [[ $rc -eq 0 ]] && { "$venv/bin/python" -m pip install --upgrade "${opts[@]}" "${specs[@]}" || rc=$?; }
   # always replace the Rax Logic code itself, even if the version number is unchanged
-  "$venv/bin/python" -m pip install --force-reinstall --no-deps "${opts[@]}" "$SRC" >/dev/null
+  [[ $rc -eq 0 ]] && { "$venv/bin/python" -m pip install --force-reinstall --no-deps "${opts[@]}" "$b" >/dev/null || rc=$?; }
+  rm -rf "$b"
+  [[ $rc -eq 0 ]] || die "pip install failed (see above)"
 }
 
 git_pull() {      # bring the source folder up to date (as the folder's owner)
@@ -370,8 +384,10 @@ bundle() {
   local dir="${1:?usage: $0 bundle DIR}"
   need_python
   mkdir -p "$dir"
-  "$PY" -m pip download --dest "$dir" pip wheel setuptools "$SRC[server,gui,fast]"
-  "$PY" -m pip wheel --no-deps --wheel-dir "$dir" "$SRC"
+  local b; b="$(clean_copy)"
+  "$PY" -m pip download --dest "$dir" pip wheel setuptools "$b[server,gui,fast]"
+  "$PY" -m pip wheel --no-deps --wheel-dir "$dir" "$b"
+  rm -rf "$b"
   say "Wheels saved in $dir (same Python version and CPU type as the target PCs)."
 }
 
